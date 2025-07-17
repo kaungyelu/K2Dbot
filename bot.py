@@ -136,31 +136,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         total_amount += amt * 2
                         i += 3
                         continue
-       
-                if '-' in entry:
-                parts = entry.split('-')
-                if len(parts) >= 3 and all(p.isdigit() for p in parts):
-                    amt = int(parts[-1])
-                    for num_str in parts[:-1]:
-                        num = int(num_str)
-                        if 0 <= num <= 99:
-                            bets.append(f"{num:02d}-{amt}")
-                            total_amount += amt
-                    i += 1
-                    continue
-                             if ',' in entry:
-                parts = entry.split(',')
-                if len(parts) >= 3 and all(p.isdigit() for p in parts):
-                    amt = int(parts[-1])
-                    for num_str in parts[:-1]:
-                        num = int(num_str)
-                        if 0 <= num <= 99:
-                            bets.append(f"{num:02d}-{amt}")
-                            total_amount += amt
-                    i += 1
-                    continue
-            
-            
             
             if '/' in entry:
                 parts = entry.split('/')
@@ -231,7 +206,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             continue
             
             if 'အခွေ' in entry or 'အပူးပါအခွေ' in entry:
-                base = entry.replace('အခွေ', '-').replace('အပူးပါ', '-')
+                base = entry.replace('အခွေ', '').replace('အပူးပါ', '')
                 if base.isdigit() and len(base) >= 2:
                     digits = [int(d) for d in base]
                     pairs = []
