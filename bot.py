@@ -7,6 +7,7 @@ from telegram.ext import (
 )
 from datetime import datetime, time
 import pytz
+import re
 
 # Environment variable
 TOKEN = os.getenv("BOT_TOKEN")
@@ -33,6 +34,8 @@ overbuy_list = {}
 message_store = {}
 overbuy_selections = {}
 break_limit = None
+pnumber_per_date = {}
+dateall_selections = {}
 
 def reverse_number(n):
     s = str(n).zfill(2)
@@ -55,7 +58,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["/overbuy", "/pnumber"],
             ["/comandza", "/total"],
             ["/tsent", "/alldata"],
-            ["/reset", "/posthis"]
+            ["/reset", "/posthis", "/dateall"]
         ]
     else:
         keyboard = [
@@ -124,6 +127,71 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         while i < len(entries):
             entry = entries[i]
             
+            # Handle combined formats like 12/34/56/90/1000r500
+            if '/' in entry and 'r' in entry:
+                parts = entry.split('/')
+                r_index = -1
+                for j, part in enumerate(parts):
+                    if 'r' in part:
+                        r_index = j
+                        break
+                
+                if r_index > 0:
+                    numbers = []
+                    for j in range(r_index):
+                        if parts[j].isdigit():
+                            num = int(parts[j])
+                            if 0 <= num <= 99:
+                                numbers.append(num)
+                    
+                    if parts[r_index].replace('r', '').isdigit():
+                        r_value = int(parts[r_index].replace('r', ''))
+                        if 0 <= r_value <= 99:
+                            numbers.append(r_value)
+                            rev = reverse_number(r_value)
+                            numbers.append(rev)
+                    
+                    if numbers and r_index + 1 < len(parts) and parts[r_index + 1].isdigit():
+                        amt = int(parts[r_index + 1])
+                        for num in numbers:
+                            bets.append(f"{num:02d}-{amt}")
+                            total_amount += amt
+                        i += r_index + 2
+                        continue
+            
+            # Handle format like 12-34-56-90-1000r500
+            if '-' in entry and 'r' in entry:
+                parts = entry.split('-')
+                r_index = -1
+                for j, part in enumerate(parts):
+                    if 'r' in part:
+                        r_index = j
+                        break
+                
+                if r_index > 0:
+                    numbers = []
+                    for j in range(r_index):
+                        if parts[j].isdigit():
+                            num = int(parts[j])
+                            if 0 <= num <= 99:
+                                numbers.append(num)
+                    
+                    if parts[r_index].replace('r', '').isdigit():
+                        r_value = int(parts[r_index].replace('r', ''))
+                        if 0 <= r_value <= 99:
+                            numbers.append(r_value)
+                            rev = reverse_number(r_value)
+                            numbers.append(rev)
+                    
+                    if numbers and r_index + 1 < len(parts) and parts[r_index + 1].isdigit():
+                        amt = int(parts[r_index + 1])
+                        for num in numbers:
+                            bets.append(f"{num:02d}-{amt}")
+                            total_amount += amt
+                        i += r_index + 2
+                        continue
+            
+            # Original parsing logic
             if i + 2 < len(entries):
                 if (entries[i].isdigit() and entries[i+1].isdigit() and entries[i+2].isdigit()):
                     num1 = int(entries[i])
@@ -187,7 +255,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             bets.append(f"{rev:02d}-{amt2}")
                             total_amount += amt1 + amt2
                             i += 1
-                            continue
+                        continue
             
             if entry.isdigit() and i+1 < len(entries) and 'r' in entries[i+1]:
                 num = int(entry)
@@ -202,8 +270,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             bets.append(f"{num:02d}-{amt1}")
                             bets.append(f"{rev:02d}-{amt2}")
                             total_amount += amt1 + amt2
-                            i += 2
-                            continue
+                        i += 2
+                        continue
             
             if 'အခွေ' in entry or 'အပူးပါအခွေ' in entry:
                 base = entry.replace('အခွေ', '').replace('အပူးပါ', '')
@@ -701,6 +769,10 @@ async def pnumber(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         pnumber_value = num
+        # Store pnumber for current date
+        current_date = get_current_date_key()
+        pnumber_per_date[current_date] = num
+        
         msg = []
         for user, records in user_data.items():
             total = 0
@@ -891,7 +963,7 @@ async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limit
+    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limit, pnumber_per_date, dateall_selections
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
@@ -905,6 +977,8 @@ async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         overbuy_list = {}
         overbuy_selections = {}
         break_limit = None
+        pnumber_per_date = {}
+        dateall_selections = {}
         
         await update.message.reply_text("✅ ဒေတာများအားလုံးကို ပြန်လည်သုတ်သင်ပြီးပါပြီ")
     except Exception as e:
@@ -943,9 +1017,13 @@ async def posthis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pnumber_total = 0
         
         for date_key in user_data[username]:
-            msg.append(f"\n📅 {date_key}:")
+            # Get pnumber for this date if exists
+            pnum = pnumber_per_date.get(date_key, None)
+            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+            
+            msg.append(f"\n📅 {date_key}{pnum_str}:")
             for num, amt in user_data[username][date_key]:
-                if pnumber_value is not None and num == pnumber_value:
+                if pnum is not None and num == pnum:
                     msg.append(f"🔴 {num:02d} ➤ {amt} 🔴")
                     pnumber_total += amt
                 else:
@@ -954,8 +1032,8 @@ async def posthis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         msg.append(f"\n💵 စုစုပေါင်း: {total_amount}")
         
-        if pnumber_value is not None:
-            msg.append(f"🔴 Power Number ({pnumber_value:02d}) စုစုပေါင်း: {pnumber_total}")
+        if pnumber_total > 0:
+            msg.append(f"🔴 Power Number စုစုပေါင်း: {pnumber_total}")
         
         await update.message.reply_text("\n".join(msg))
         
@@ -975,9 +1053,13 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if username in user_data:
             for date_key in user_data[username]:
-                msg.append(f"\n📅 {date_key}:")
+                # Get pnumber for this date if exists
+                pnum = pnumber_per_date.get(date_key, None)
+                pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+                
+                msg.append(f"\n📅 {date_key}{pnum_str}:")
                 for num, amt in user_data[username][date_key]:
-                    if pnumber_value is not None and num == pnumber_value:
+                    if pnum is not None and num == pnum:
                         msg.append(f"🔴 {num:02d} ➤ {amt} 🔴")
                         pnumber_total += amt
                     else:
@@ -986,8 +1068,8 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             msg.append(f"\n💵 စုစုပေါင်း: {total_amount}")
             
-            if pnumber_value is not None:
-                msg.append(f"🔴 Power Number ({pnumber_value:02d}) စုစုပေါင်း: {pnumber_total}")
+            if pnumber_total > 0:
+                msg.append(f"🔴 Power Number စုစုပေါင်း: {pnumber_total}")
             
             await query.edit_message_text("\n".join(msg))
         else:
@@ -995,6 +1077,154 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         logger.error(f"Error in posthis_callback: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def dateall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id
+    try:
+        if update.effective_user.id != admin_id:
+            await update.message.reply_text("❌ Admin only command")
+            return
+            
+        # Get all unique dates from user_data
+        all_dates = set()
+        for user in user_data:
+            for date_key in user_data[user]:
+                all_dates.add(date_key)
+                
+        if not all_dates:
+            await update.message.reply_text("ℹ️ မည်သည့်စာရင်းမှ မရှိသေးပါ")
+            return
+            
+        # Initialize selection dictionary
+        dateall_selections[update.effective_user.id] = {date: False for date in all_dates}
+        
+        # Sort dates in reverse chronological order (newest first)
+        sorted_dates = sorted(all_dates, reverse=True)
+        
+        # Build message with checkboxes
+        msg = ["📅 စာရင်းရှိသည့်နေ့ရက်များကို ရွေးချယ်ပါ:"]
+        buttons = []
+        
+        for date in sorted_dates:
+            # Get pnumber for this date if exists
+            pnum = pnumber_per_date.get(date, None)
+            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+            
+            is_selected = dateall_selections[update.effective_user.id][date]
+            button_text = f"{date}{pnum_str} {'✅' if is_selected else '⬜'}"
+            buttons.append([InlineKeyboardButton(button_text, callback_data=f"dateall_toggle:{date}")])
+        
+        buttons.append([InlineKeyboardButton("👁‍🗨 View", callback_data="dateall_view")])
+        reply_markup = InlineKeyboardMarkup(buttons)
+        
+        await update.message.reply_text("\n".join(msg), reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in dateall: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        _, date_key = query.data.split(':')
+        user_id = query.from_user.id
+        
+        if user_id not in dateall_selections or date_key not in dateall_selections[user_id]:
+            await query.edit_message_text("❌ Error: Selection data not found")
+            return
+            
+        # Toggle selection status
+        dateall_selections[user_id][date_key] = not dateall_selections[user_id][date_key]
+        
+        # Rebuild the message with updated selections
+        msg = ["📅 စာရင်းရှိသည့်နေ့ရက်များကို ရွေးချယ်ပါ:"]
+        buttons = []
+        
+        # Sort dates in reverse chronological order
+        sorted_dates = sorted(dateall_selections[user_id].keys(), reverse=True)
+        
+        for date in sorted_dates:
+            pnum = pnumber_per_date.get(date, None)
+            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+            
+            is_selected = dateall_selections[user_id][date]
+            button_text = f"{date}{pnum_str} {'✅' if is_selected else '⬜'}"
+            buttons.append([InlineKeyboardButton(button_text, callback_data=f"dateall_toggle:{date}")])
+        
+        buttons.append([InlineKeyboardButton("👁‍🗨 View", callback_data="dateall_view")])
+        reply_markup = InlineKeyboardMarkup(buttons)
+        
+        await query.edit_message_text("\n".join(msg), reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in dateall_toggle: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        user_id = query.from_user.id
+        
+        if user_id not in dateall_selections:
+            await query.edit_message_text("❌ Error: Selection data not found")
+            return
+            
+        # Get selected dates
+        selected_dates = [date for date, selected in dateall_selections[user_id].items() if selected]
+        
+        if not selected_dates:
+            await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
+            return
+            
+        # Aggregate data for each user across selected dates
+        user_totals = {}
+        overall_total = 0
+        overall_power_total = 0
+        
+        for user in user_data:
+            user_total = 0
+            user_power_total = 0
+            
+            for date in selected_dates:
+                if user in user_data and date in user_data[user]:
+                    # Get pnumber for this date if exists
+                    pnum = pnumber_per_date.get(date, None)
+                    
+                    for num, amt in user_data[user][date]:
+                        user_total += amt
+                        if pnum is not None and num == pnum:
+                            user_power_total += amt
+            
+            user_totals[user] = {
+                'total': user_total,
+                'power_total': user_power_total
+            }
+            overall_total += user_total
+            overall_power_total += user_power_total
+        
+        # Build report
+        msg = ["📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
+        msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
+        
+        for user, data in user_totals.items():
+            msg.append(f"👤 {user}:")
+            msg.append(f"  💵 စုစုပေါင်း: {data['total']}")
+            msg.append(f"  🔴 Power Number စုစုပေါင်း: {data['power_total']}")
+            msg.append("")
+        
+        msg.append(f"📊 စုစုပေါင်း:")
+        msg.append(f"  💵 လောင်းကြေးစုစုပေါင်း: {overall_total}")
+        msg.append(f"  🔴 Power Number စုစုပေါင်း: {overall_power_total}")
+        
+        await query.edit_message_text("\n".join(msg))
+        
+    except Exception as e:
+        logger.error(f"Error in dateall_view: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
 
 if __name__ == "__main__":
@@ -1018,6 +1248,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("alldata", alldata))
     app.add_handler(CommandHandler("reset", reset_data))
     app.add_handler(CommandHandler("posthis", posthis))
+    app.add_handler(CommandHandler("dateall", dateall))
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(comza_input, pattern=r"^comza:"))
@@ -1029,6 +1260,8 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(overbuy_unselect_all, pattern=r"^overbuy_unselect_all$"))
     app.add_handler(CallbackQueryHandler(overbuy_confirm, pattern=r"^overbuy_confirm$"))
     app.add_handler(CallbackQueryHandler(posthis_callback, pattern=r"^posthis:"))
+    app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
+    app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
 
     # Message handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
