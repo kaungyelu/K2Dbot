@@ -24,18 +24,15 @@ MYANMAR_TIMEZONE = pytz.timezone('Asia/Yangon')
 
 # Globals
 admin_id = None
-user_data = {}
-ledger = {}
-za_data = {}
-com_data = {}
-pnumber_value = None
-date_control = {}
-overbuy_list = {}
-message_store = {}
-overbuy_selections = {}
-break_limit = None
-pnumber_per_date = {}
-dateall_selections = {}
+user_data = {}  # {username: {date_key: [(num, amt)]}}
+ledger = {}     # {date_key: {number: total_amount}}
+break_limits = {}  # {date_key: limit}
+pnumber_per_date = {}  # {date_key: power_number}
+date_control = {}  # {date_key: True/False}
+overbuy_list = {}  # {date_key: {username: {num: amount}}}
+message_store = {}  # {(user_id, message_id): (sent_message_id, bets, total_amount, date_key)}
+overbuy_selections = {}  # {date_key: {username: {num: amount}}}
+current_working_date = None  # For admin date selection
 
 def reverse_number(n):
     s = str(n).zfill(2)
@@ -49,6 +46,19 @@ def get_current_date_key():
     now = datetime.now(MYANMAR_TIMEZONE)
     return f"{now.strftime('%d/%m/%Y')} {get_time_segment()}"
 
+def get_available_dates():
+    dates = set()
+    # Get dates from user data
+    for user_data_dict in user_data.values():
+        dates.update(user_data_dict.keys())
+    # Get dates from ledger
+    dates.update(ledger.keys())
+    # Get dates from break limits
+    dates.update(break_limits.keys())
+    # Get dates from pnumber
+    dates.update(pnumber_per_date.keys())
+    return sorted(dates, reverse=True)
+
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     if update.effective_user.id == admin_id:
@@ -58,7 +68,8 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["/overbuy", "/pnumber"],
             ["/comandza", "/total"],
             ["/tsent", "/alldata"],
-            ["/reset", "/posthis", "/dateall"]
+            ["/reset", "/posthis", "/dateall"],
+            ["/Cdate", "/Ddate"]  # New date management commands
         ]
     else:
         keyboard = [
@@ -69,8 +80,9 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("မီနူးကိုရွေးချယ်ပါ", reply_markup=reply_markup)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id
+    global admin_id, current_working_date
     admin_id = update.effective_user.id
+    current_working_date = get_current_date_key()
     logger.info(f"Admin set to: {admin_id}")
     await update.message.reply_text("🤖 Bot started. Admin privileges granted!")
     await show_menu(update, context)
@@ -388,19 +400,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key not in user_data[user.username]:
             user_data[user.username][key] = []
 
+        # Initialize ledger for this date if not exists
+        if key not in ledger:
+            ledger[key] = {}
+
         for bet in bets:
             num, amt = bet.split('-')
             num = int(num)
             amt = int(amt)
-            ledger[num] = ledger.get(num, 0) + amt
+            
+            # Update ledger for this date
+            ledger[key][num] = ledger[key].get(num, 0) + amt
+            
+            # Update user data
             user_data[user.username][key].append((num, amt))
 
         if bets:
             response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
-            keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}")]]
+            keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
-            message_store[(user.id, update.message.message_id)] = (sent_message.message_id, bets, total_amount)
+            message_store[(user.id, update.message.message_id)] = (sent_message.message_id, bets, total_amount, key)
         else:
             await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ")
             
@@ -413,15 +433,15 @@ async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     try:
-        _, user_id_str, message_id_str = query.data.split(':')
+        _, user_id_str, message_id_str, date_key = query.data.split(':')
         user_id = int(user_id_str)
         message_id = int(message_id_str)
         
         if query.from_user.id != admin_id:
             if (user_id, message_id) in message_store:
-                sent_message_id, bets, total_amount = message_store[(user_id, message_id)]
+                sent_message_id, bets, total_amount, _ = message_store[(user_id, message_id)]
                 response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
-                keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user_id}:{message_id}")]]
+                keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user_id}:{message_id}:{date_key}")]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_text(
                     text=f"❌ User များမဖျက်နိုင်ပါ၊ Admin ကိုဆက်သွယ်ပါ\n\n{response}",
@@ -432,8 +452,8 @@ async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         keyboard = [
-            [InlineKeyboardButton("✅ OK", callback_data=f"confirm_delete:{user_id}:{message_id}")],
-            [InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_delete:{user_id}:{message_id}")]
+            [InlineKeyboardButton("✅ OK", callback_data=f"confirm_delete:{user_id}:{message_id}:{date_key}")],
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_delete:{user_id}:{message_id}:{date_key}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("⚠️ သေချာလား? ဒီလောင်းကြေးကိုဖျက်မှာလား?", reply_markup=reply_markup)
@@ -447,7 +467,7 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     try:
-        _, user_id_str, message_id_str = query.data.split(':')
+        _, user_id_str, message_id_str, date_key = query.data.split(':')
         user_id = int(user_id_str)
         message_id = int(message_id_str)
         
@@ -455,13 +475,12 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ ဒေတာမတွေ့ပါ")
             return
             
-        sent_message_id, bets, total_amount = message_store[(user_id, message_id)]
-        key = get_current_date_key()
+        sent_message_id, bets, total_amount, _ = message_store[(user_id, message_id)]
         
         username = None
         for uname, data in user_data.items():
-            if key in data:
-                for bet in data[key]:
+            if date_key in data:
+                for bet in data[date_key]:
                     num, amt = bet
                     if f"{num:02d}-{amt}" in bets:
                         username = uname
@@ -478,19 +497,22 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
             num = int(num)
             amt = int(amt)
             
-            if num in ledger:
-                ledger[num] -= amt
-                if ledger[num] <= 0:
-                    del ledger[num]
+            if date_key in ledger and num in ledger[date_key]:
+                ledger[date_key][num] -= amt
+                if ledger[date_key][num] <= 0:
+                    del ledger[date_key][num]
+                # Remove date from ledger if empty
+                if not ledger[date_key]:
+                    del ledger[date_key]
             
-            if username in user_data and key in user_data[username]:
-                user_data[username][key] = [
-                    (n, a) for n, a in user_data[username][key] 
+            if username in user_data and date_key in user_data[username]:
+                user_data[username][date_key] = [
+                    (n, a) for n, a in user_data[username][date_key] 
                     if not (n == num and a == amt)
                 ]
                 
-                if not user_data[username][key]:
-                    del user_data[username][key]
+                if not user_data[username][date_key]:
+                    del user_data[username][date_key]
                     if not user_data[username]:
                         del user_data[username]
         
@@ -507,14 +529,14 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     try:
-        _, user_id_str, message_id_str = query.data.split(':')
+        _, user_id_str, message_id_str, date_key = query.data.split(':')
         user_id = int(user_id_str)
         message_id = int(message_id_str)
         
         if (user_id, message_id) in message_store:
-            sent_message_id, bets, total_amount = message_store[(user_id, message_id)]
+            sent_message_id, bets, total_amount, _ = message_store[(user_id, message_id)]
             response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
-            keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user_id}:{message_id}")]]
+            keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user_id}:{message_id}:{date_key}")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(response, reply_markup=reply_markup)
         else:
@@ -525,57 +547,78 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Error occurred while canceling deletion")
 
 async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id
+    global admin_id, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
             
-        lines = ["📒 လက်ကျန်ငွေစာရင်း"]
+        # Determine which date to show
+        date_key = current_working_date if current_working_date else get_current_date_key()
+        
+        if date_key not in ledger:
+            await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
+            return
+            
+        lines = [f"📒 {date_key} လက်ကျန်ငွေစာရင်း"]
+        ledger_data = ledger[date_key]
+        
         for i in range(100):
-            total = ledger.get(i, 0)
+            total = ledger_data.get(i, 0)
             if total > 0:
-                if pnumber_value is not None and i == pnumber_value:
+                if date_key in pnumber_per_date and i == pnumber_per_date[date_key]:
                     lines.append(f"🔴 {i:02d} ➤ {total} 🔴")
                 else:
                     lines.append(f"{i:02d} ➤ {total}")
         
         if len(lines) == 1:
-            await update.message.reply_text("ℹ️ လက်ရှိတွင် လောင်းကြေးမရှိပါ")
+            await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
         else:
-            if pnumber_value is not None:
-                lines.append(f"\n🔴 Power Number: {pnumber_value:02d} ➤ {ledger.get(pnumber_value, 0)}")
+            if date_key in pnumber_per_date:
+                pnum = pnumber_per_date[date_key]
+                lines.append(f"\n🔴 Power Number: {pnum:02d} ➤ {ledger_data.get(pnum, 0)}")
             await update.message.reply_text("\n".join(lines))
     except Exception as e:
         logger.error(f"Error in ledger: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, break_limit
+    global admin_id, break_limits, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to work on
+        date_key = current_working_date if current_working_date else get_current_date_key()
+            
         if not context.args:
-            if break_limit is None:
-                await update.message.reply_text("ℹ️ Usage: /break [limit]\nℹ️ လက်ရှိတွင် break limit မသတ်မှတ်ရသေးပါ")
+            if date_key in break_limits:
+                await update.message.reply_text(f"ℹ️ Usage: /break [limit]\nℹ️ လက်ရှိတွင် break limit: {break_limits[date_key]}")
             else:
-                await update.message.reply_text(f"ℹ️ Usage: /break [limit]\nℹ️ လက်ရှိ break limit: {break_limit}")
+                await update.message.reply_text(f"ℹ️ Usage: /break [limit]\nℹ️ {date_key} အတွက် break limit မသတ်မှတ်ရသေးပါ")
             return
             
         try:
             new_limit = int(context.args[0])
-            break_limit = new_limit
-            await update.message.reply_text(f"✅ Break limit ကို {break_limit} အဖြစ်သတ်မှတ်ပြီးပါပြီ")
+            break_limits[date_key] = new_limit
+            await update.message.reply_text(f"✅ {date_key} အတွက် Break limit ကို {new_limit} အဖြစ်သတ်မှတ်ပြီးပါပြီ")
             
-            msg = [f"📌 Limit ({break_limit}) ကျော်ဂဏန်းများ:"]
-            for k, v in ledger.items():
-                if v > break_limit:
-                    msg.append(f"{k:02d} ➤ {v - break_limit}")
+            if date_key not in ledger:
+                await update.message.reply_text(f"ℹ️ {date_key} အတွက် လောင်းကြေးမရှိသေးပါ")
+                return
+                
+            ledger_data = ledger[date_key]
+            msg = [f"📌 {date_key} အတွက် Limit ({new_limit}) ကျော်ဂဏန်းများ:"]
+            found = False
             
-            if len(msg) == 1:
-                await update.message.reply_text(f"ℹ️ ဘယ်ဂဏန်းမှ limit ({break_limit}) မကျော်ပါ")
+            for num, amt in ledger_data.items():
+                if amt > new_limit:
+                    msg.append(f"{num:02d} ➤ {amt - new_limit}")
+                    found = True
+            
+            if not found:
+                await update.message.reply_text(f"ℹ️ {date_key} အတွက် ဘယ်ဂဏန်းမှ limit ({new_limit}) မကျော်ပါ")
             else:
                 await update.message.reply_text("\n".join(msg))
                 
@@ -587,35 +630,47 @@ async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def overbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, break_limit
+    global admin_id, break_limits, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to work on
+        date_key = current_working_date if current_working_date else get_current_date_key()
+            
         if not context.args:
             await update.message.reply_text("ℹ️ ကာဒိုင်အမည်ထည့်ပါ")
             return
             
-        if break_limit is None:
-            await update.message.reply_text("⚠️ ကျေးဇူးပြု၍ /break [limit] ဖြင့် limit သတ်မှတ်ပါ")
+        if date_key not in break_limits:
+            await update.message.reply_text(f"⚠️ {date_key} အတွက် ကျေးဇူးပြု၍ /break [limit] ဖြင့် limit သတ်မှတ်ပါ")
+            return
+            
+        if date_key not in ledger:
+            await update.message.reply_text(f"ℹ️ {date_key} အတွက် လောင်းကြေးမရှိသေးပါ")
             return
             
         username = context.args[0]
         context.user_data['overbuy_username'] = username
+        context.user_data['overbuy_date'] = date_key
         
-        over_numbers = {num: amt - break_limit for num, amt in ledger.items() if amt > break_limit}
+        ledger_data = ledger[date_key]
+        break_limit_val = break_limits[date_key]
+        over_numbers = {num: amt - break_limit_val for num, amt in ledger_data.items() if amt > break_limit_val}
         
         if not over_numbers:
-            await update.message.reply_text(f"ℹ️ ဘယ်ဂဏန်းမှ limit ({break_limit}) မကျော်ပါ")
+            await update.message.reply_text(f"ℹ️ {date_key} အတွက် ဘယ်ဂဏန်းမှ limit ({break_limit_val}) မကျော်ပါ")
             return
             
-        overbuy_selections[username] = over_numbers.copy()
+        if date_key not in overbuy_selections:
+            overbuy_selections[date_key] = {}
+        overbuy_selections[date_key][username] = over_numbers.copy()
         
-        msg = [f"{username} ထံမှာတင်ရန်များ (Limit: {break_limit}):"]
+        msg = [f"{username} ထံမှာတင်ရန်များ (Date: {date_key}, Limit: {break_limit_val}):"]
         buttons = []
         for num, amt in over_numbers.items():
-            buttons.append([InlineKeyboardButton(f"{num:02d} ➤ {amt} {'✅' if num in overbuy_selections[username] else '⬜'}", 
+            buttons.append([InlineKeyboardButton(f"{num:02d} ➤ {amt} {'✅' if num in overbuy_selections[date_key][username] else '⬜'}", 
                           callback_data=f"overbuy_select:{num}")])
         
         buttons.append([
@@ -639,20 +694,26 @@ async def overbuy_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, num_str = query.data.split(':')
         num = int(num_str)
         username = context.user_data.get('overbuy_username')
+        date_key = context.user_data.get('overbuy_date')
         
-        if username not in overbuy_selections:
-            await query.edit_message_text("❌ Error: User not found")
+        if not username or not date_key:
+            await query.edit_message_text("❌ Error: User or date not found")
             return
             
-        if num in overbuy_selections[username]:
-            del overbuy_selections[username][num]
-        else:
-            overbuy_selections[username][num] = ledger[num] - break_limit
+        if date_key not in overbuy_selections or username not in overbuy_selections[date_key]:
+            await query.edit_message_text("❌ Error: Selection data not found")
+            return
             
-        msg = [f"{username} ထံမှာတင်ရန်များ (Limit: {break_limit}):"]
+        if num in overbuy_selections[date_key][username]:
+            del overbuy_selections[date_key][username][num]
+        else:
+            break_limit_val = break_limits[date_key]
+            overbuy_selections[date_key][username][num] = ledger[date_key][num] - break_limit_val
+            
+        msg = [f"{username} ထံမှာတင်ရန်များ (Date: {date_key}):"]
         buttons = []
-        for n, amt in overbuy_selections[username].items():
-            buttons.append([InlineKeyboardButton(f"{n:02d} ➤ {amt} {'✅' if n in overbuy_selections[username] else '⬜'}", 
+        for n, amt in overbuy_selections[date_key][username].items():
+            buttons.append([InlineKeyboardButton(f"{n:02d} ➤ {amt} {'✅' if n in overbuy_selections[date_key][username] else '⬜'}", 
                           callback_data=f"overbuy_select:{n}")])
         
         buttons.append([
@@ -674,15 +735,26 @@ async def overbuy_select_all(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     try:
         username = context.user_data.get('overbuy_username')
-        if username not in overbuy_selections:
-            await query.edit_message_text("❌ Error: User not found")
+        date_key = context.user_data.get('overbuy_date')
+        
+        if not username or not date_key:
+            await query.edit_message_text("❌ Error: User or date not found")
             return
             
-        overbuy_selections[username] = {num: amt - break_limit for num, amt in ledger.items() if amt > break_limit}
+        if date_key not in overbuy_selections:
+            overbuy_selections[date_key] = {}
+            
+        break_limit_val = break_limits[date_key]
+        ledger_data = ledger[date_key]
+        overbuy_selections[date_key][username] = {
+            num: amt - break_limit_val 
+            for num, amt in ledger_data.items() 
+            if amt > break_limit_val
+        }
         
-        msg = [f"{username} ထံမှာတင်ရန်များ (Limit: {break_limit}):"]
+        msg = [f"{username} ထံမှာတင်ရန်များ (Date: {date_key}):"]
         buttons = []
-        for num, amt in overbuy_selections[username].items():
+        for num, amt in overbuy_selections[date_key][username].items():
             buttons.append([InlineKeyboardButton(f"{num:02d} ➤ {amt} ✅", 
                           callback_data=f"overbuy_select:{num}")])
         
@@ -705,18 +777,26 @@ async def overbuy_unselect_all(update: Update, context: ContextTypes.DEFAULT_TYP
     
     try:
         username = context.user_data.get('overbuy_username')
-        if username not in overbuy_selections:
-            await query.edit_message_text("❌ Error: User not found")
+        date_key = context.user_data.get('overbuy_date')
+        
+        if not username or not date_key:
+            await query.edit_message_text("❌ Error: User or date not found")
             return
             
-        overbuy_selections[username] = {}
+        if date_key not in overbuy_selections:
+            overbuy_selections[date_key] = {}
+            
+        overbuy_selections[date_key][username] = {}
         
-        msg = [f"{username} ထံမှာတင်ရန်များ (Limit: {break_limit}):"]
+        break_limit_val = break_limits[date_key]
+        ledger_data = ledger[date_key]
+        over_numbers = {num: amt - break_limit_val for num, amt in ledger_data.items() if amt > break_limit_val}
+        
+        msg = [f"{username} ထံမှာတင်ရန်များ (Date: {date_key}):"]
         buttons = []
-        for num, amt in ledger.items():
-            if amt > break_limit:
-                buttons.append([InlineKeyboardButton(f"{num:02d} ➤ {amt - break_limit} ⬜", 
-                              callback_data=f"overbuy_select:{num}")])
+        for num, amt in over_numbers.items():
+            buttons.append([InlineKeyboardButton(f"{num:02d} ➤ {amt} ⬜", 
+                          callback_data=f"overbuy_select:{num}")])
         
         buttons.append([
             InlineKeyboardButton("Select All", callback_data="overbuy_select_all"),
@@ -737,35 +817,44 @@ async def overbuy_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         username = context.user_data.get('overbuy_username')
-        if username not in overbuy_selections:
-            await query.edit_message_text("❌ Error: User not found")
+        date_key = context.user_data.get('overbuy_date')
+        
+        if not username or not date_key:
+            await query.edit_message_text("❌ Error: User or date not found")
             return
             
-        selected_numbers = overbuy_selections[username]
+        if date_key not in overbuy_selections or username not in overbuy_selections[date_key]:
+            await query.edit_message_text("❌ Error: Selection data not found")
+            return
+            
+        selected_numbers = overbuy_selections[date_key][username]
         if not selected_numbers:
             await query.edit_message_text("⚠️ ဘာဂဏန်းမှမရွေးထားပါ")
             return
             
-        key = get_current_date_key()
         if username not in user_data:
             user_data[username] = {}
-        if key not in user_data[username]:
-            user_data[username][key] = []
+        if date_key not in user_data[username]:
+            user_data[username][date_key] = []
             
         total_amount = 0
         bets = []
         for num, amt in selected_numbers.items():
-            user_data[username][key].append((num, -amt))
+            user_data[username][date_key].append((num, -amt))
             bets.append(f"{num:02d}-{amt}")
             total_amount += amt
             
-            ledger[num] = ledger.get(num, 0) - amt
-            if ledger[num] <= 0:
-                del ledger[num]
+            # Update ledger
+            ledger[date_key][num] = ledger[date_key].get(num, 0) - amt
+            if ledger[date_key][num] <= 0:
+                del ledger[date_key][num]
         
-        overbuy_list[username] = selected_numbers.copy()
+        # Initialize overbuy_list for date if needed
+        if date_key not in overbuy_list:
+            overbuy_list[date_key] = {}
+        overbuy_list[date_key][username] = selected_numbers.copy()
         
-        response = f"{username}\n" + "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
+        response = f"{username} - {date_key}\n" + "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
         await query.edit_message_text(response)
         
     except Exception as e:
@@ -773,42 +862,54 @@ async def overbuy_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Error occurred")
 
 async def pnumber(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, pnumber_value
+    global admin_id, pnumber_per_date, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to work on
+        date_key = current_working_date if current_working_date else get_current_date_key()
+            
         if not context.args:
-            await update.message.reply_text("ℹ️ Usage: /pnumber [number]")
+            if date_key in pnumber_per_date:
+                await update.message.reply_text(f"ℹ️ Usage: /pnumber [number]\nℹ️ {date_key} အတွက် Power Number: {pnumber_per_date[date_key]:02d}")
+            else:
+                await update.message.reply_text(f"ℹ️ Usage: /pnumber [number]\nℹ️ {date_key} အတွက် Power Number မသတ်မှတ်ရသေးပါ")
             return
             
-        num = int(context.args[0])
-        if num < 0 or num > 99:
-            await update.message.reply_text("⚠️ ဂဏန်းကို 0 နှင့် 99 ကြားထည့်ပါ")
-            return
+        try:
+            num = int(context.args[0])
+            if num < 0 or num > 99:
+                await update.message.reply_text("⚠️ ဂဏန်းကို 0 နှင့် 99 ကြားထည့်ပါ")
+                return
+                
+            pnumber_per_date[date_key] = num
+            await update.message.reply_text(f"✅ {date_key} အတွက် Power Number ကို {num:02d} အဖြစ်သတ်မှတ်ပြီး")
             
-        pnumber_value = num
-        # Store pnumber for current date
-        current_date = get_current_date_key()
-        pnumber_per_date[current_date] = num
-        
-        msg = []
-        for user, records in user_data.items():
-            total = 0
-            for date_key in records:
-                for bet_num, amt in records[date_key]:
-                    if bet_num == pnumber_value:
-                        total += amt
-            if total > 0:
-                msg.append(f"{user}: {pnumber_value:02d} ➤ {total}")
-        
-        if msg:
-            await update.message.reply_text("\n".join(msg))
-        else:
-            await update.message.reply_text(f"ℹ️ {pnumber_value:02d} အတွက် လောင်းကြေးမရှိပါ")
-    except (ValueError, IndexError):
-        await update.message.reply_text("⚠️ ဂဏန်းမှန်မှန်ထည့်ပါ (ဥပမာ: /pnumber 15)")
+            # Show report for this date
+            msg = []
+            total_power = 0
+            
+            for user, records in user_data.items():
+                if date_key in records:
+                    user_total = 0
+                    for bet_num, amt in records[date_key]:
+                        if bet_num == num:
+                            user_total += amt
+                    if user_total > 0:
+                        msg.append(f"{user}: {num:02d} ➤ {user_total}")
+                        total_power += user_total
+            
+            if msg:
+                msg.append(f"\n🔴 {date_key} အတွက် Power Number စုစုပေါင်း: {total_power}")
+                await update.message.reply_text("\n".join(msg))
+            else:
+                await update.message.reply_text(f"ℹ️ {date_key} အတွက် {num:02d} အတွက် လောင်းကြေးမရှိပါ")
+                
+        except ValueError:
+            await update.message.reply_text("⚠️ ဂဏန်းမှန်မှန်ထည့်ပါ (ဥပမာ: /pnumber 15)")
+            
     except Exception as e:
         logger.error(f"Error in pnumber: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -874,91 +975,96 @@ async def comza_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id
+    global admin_id, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
+            return
+            
+        # Determine which date to work on
+        date_key = current_working_date if current_working_date else get_current_date_key()
+            
+        if date_key not in pnumber_per_date:
+            await update.message.reply_text(f"⚠️ {date_key} အတွက် ကျေးဇူးပြု၍ /pnumber [number] ဖြင့် Power Number သတ်မှတ်ပါ")
             return
             
         if not user_data:
             await update.message.reply_text("ℹ️ လက်ရှိစာရင်းမရှိပါ")
             return
             
-        if pnumber_value is None:
-            await update.message.reply_text("ℹ️ ကျေးဇူးပြု၍ /pnumber 15")
-            return
-            
-        msg = []
+        pnum = pnumber_per_date[date_key]
+        msg = [f"📊 {date_key} အတွက် စုပေါင်းရလဒ်"]
         total_net = 0
         
         for user, records in user_data.items():
-            user_total_amt = 0
-            user_pamt = 0
-            
-            for date_key in records:
+            if date_key in records:
+                user_total_amt = 0
+                user_pamt = 0
+                
                 for num, amt in records[date_key]:
                     user_total_amt += amt
-                    if num == pnumber_value:
+                    if num == pnum:
                         user_pamt += amt
-            
-            com = com_data.get(user, 0)
-            za = za_data.get(user, 0)
-            
-            commission_amt = (user_total_amt * com) // 100
-            after_com = user_total_amt - commission_amt
-            win_amt = user_pamt * za
-            
-            net = after_com - win_amt
-            status = "ဒိုင်ကပေးရမည်" if net < 0 else "ဒိုင်ကရမည်"
-            
-            user_report = (
-                f"👤 {user}\n"
-                f"💵 စုစုပေါင်း: {user_total_amt}\n"
-                f"📊 Com({com}%) ➤ {commission_amt}\n"
-                f"💰 Com ပြီး: {after_com}\n"
-                f"🔢 Power Number({pnumber_value:02d}) ➤ {user_pamt}\n"
-                f"🎯 Za({za}) ➤ {win_amt}\n"
-                f"📈 ရလဒ်: {abs(net)} ({status})\n"
-                "-----------------"
-            )
-            msg.append(user_report)
-            total_net += net
+                
+                com = com_data.get(user, 0)
+                za = za_data.get(user, 0)
+                
+                commission_amt = (user_total_amt * com) // 100
+                after_com = user_total_amt - commission_amt
+                win_amt = user_pamt * za
+                
+                net = after_com - win_amt
+                status = "ဒိုင်ကပေးရမည်" if net < 0 else "ဒိုင်ကရမည်"
+                
+                user_report = (
+                    f"👤 {user}\n"
+                    f"💵 စုစုပေါင်း: {user_total_amt}\n"
+                    f"📊 Com({com}%) ➤ {commission_amt}\n"
+                    f"💰 Com ပြီး: {after_com}\n"
+                    f"🔢 Power Number({pnum:02d}) ➤ {user_pamt}\n"
+                    f"🎯 Za({za}) ➤ {win_amt}\n"
+                    f"📈 ရလဒ်: {abs(net)} ({status})\n"
+                    "-----------------"
+                )
+                msg.append(user_report)
+                total_net += net
 
-        msg.append(f"\n📊 စုစုပေါင်းရလဒ်: {abs(total_net)} ({'ဒိုင်အရှုံး' if total_net < 0 else 'ဒိုင်အမြတ်'})")
-
-        if msg:
+        if len(msg) > 1:
+            msg.append(f"\n📊 စုစုပေါင်းရလဒ်: {abs(total_net)} ({'ဒိုင်အရှုံး' if total_net < 0 else 'ဒိုင်အမြတ်'})")
             await update.message.reply_text("\n".join(msg))
         else:
-            await update.message.reply_text("ℹ️ တွက်ချက်မှုများအတွက် ဒေတာမရှိပါ")
+            await update.message.reply_text(f"ℹ️ {date_key} အတွက် ဒေတာမရှိပါ")
     except Exception as e:
         logger.error(f"Error in total: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def tsent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id
+    global admin_id, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
+            
+        # Determine which date to work on
+        date_key = current_working_date if current_working_date else get_current_date_key()
             
         if not user_data:
             await update.message.reply_text("ℹ️ လက်ရှိ user မရှိပါ")
             return
             
         for user in user_data:
-            user_report = []
-            total_amt = 0
-            
-            for date_key, records in user_data[user].items():
-                user_report.append(f"📅 {date_key}:")
-                for num, amt in records:
+            if date_key in user_data[user]:
+                user_report = [f"👤 {user} - {date_key}:"]
+                total_amt = 0
+                
+                for num, amt in user_data[user][date_key]:
                     user_report.append(f"  - {num:02d} ➤ {amt}")
                     total_amt += amt
-            
-            user_report.append(f"💵 စုစုပေါင်း: {total_amt}")
-            await update.message.reply_text("\n".join(user_report))
+                
+                user_report.append(f"💵 စုစုပေါင်း: {total_amt}")
+                await update.message.reply_text("\n".join(user_report))
         
-        await update.message.reply_text("✅ စာရင်းများအားလုံး ပေးပို့ပြီးပါပြီ")
+        await update.message.reply_text(f"✅ {date_key} အတွက် စာရင်းများအားလုံး ပေးပို့ပြီးပါပြီ")
     except Exception as e:
         logger.error(f"Error in tsent: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -983,7 +1089,7 @@ async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limit, pnumber_per_date, dateall_selections
+    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
@@ -996,11 +1102,11 @@ async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_control = {}
         overbuy_list = {}
         overbuy_selections = {}
-        break_limit = None
+        break_limits = {}
         pnumber_per_date = {}
-        dateall_selections = {}
+        current_working_date = get_current_date_key()
         
-        await update.message.reply_text("✅ ဒေတာများအားလုံးကို ပြန်လည်သုတ်သင်ပြီးပါပြီ")
+        await update.message.reply_text("✅ ဒေတာများအားလုံးကို ပြန်လည်သုတ်သင်ပြီး လက်ရှိနေ့သို့ပြန်လည်သတ်မှတ်ပြီးပါပြီ")
     except Exception as e:
         logger.error(f"Error in reset_data: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -1032,30 +1138,49 @@ async def posthis(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
             return
             
+        # For non-admin, show current date only
+        date_key = get_current_date_key() if not is_admin else None
+        
         msg = [f"📊 {username} ရဲ့လောင်းကြေးမှတ်တမ်း"]
         total_amount = 0
         pnumber_total = 0
         
-        for date_key in user_data[username]:
-            # Get pnumber for this date if exists
-            pnum = pnumber_per_date.get(date_key, None)
-            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
-            
-            msg.append(f"\n📅 {date_key}{pnum_str}:")
-            for num, amt in user_data[username][date_key]:
-                if pnum is not None and num == pnum:
-                    msg.append(f"🔴 {num:02d} ➤ {amt} 🔴")
-                    pnumber_total += amt
-                else:
-                    msg.append(f"{num:02d} ➤ {amt}")
-                total_amount += amt
+        if is_admin:
+            # Admin can see all dates
+            for date_key in user_data[username]:
+                pnum = pnumber_per_date.get(date_key, None)
+                pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+                
+                msg.append(f"\n📅 {date_key}{pnum_str}:")
+                for num, amt in user_data[username][date_key]:
+                    if pnum is not None and num == pnum:
+                        msg.append(f"🔴 {num:02d} ➤ {amt} 🔴")
+                        pnumber_total += amt
+                    else:
+                        msg.append(f"{num:02d} ➤ {amt}")
+                    total_amount += amt
+        else:
+            # Non-admin only sees current date
+            if date_key in user_data[username]:
+                pnum = pnumber_per_date.get(date_key, None)
+                pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+                
+                msg.append(f"\n📅 {date_key}{pnum_str}:")
+                for num, amt in user_data[username][date_key]:
+                    if pnum is not None and num == pnum:
+                        msg.append(f"🔴 {num:02d} ➤ {amt} 🔴")
+                        pnumber_total += amt
+                    else:
+                        msg.append(f"{num:02d} ➤ {amt}")
+                    total_amount += amt
         
-        msg.append(f"\n💵 စုစုပေါင်း: {total_amount}")
-        
-        if pnumber_total > 0:
-            msg.append(f"🔴 Power Number စုစုပေါင်း: {pnumber_total}")
-        
-        await update.message.reply_text("\n".join(msg))
+        if len(msg) > 1:
+            msg.append(f"\n💵 စုစုပေါင်း: {total_amount}")
+            if pnumber_total > 0:
+                msg.append(f"🔴 Power Number စုစုပေါင်း: {pnumber_total}")
+            await update.message.reply_text("\n".join(msg))
+        else:
+            await update.message.reply_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
         
     except Exception as e:
         logger.error(f"Error in posthis: {str(e)}")
@@ -1073,7 +1198,6 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if username in user_data:
             for date_key in user_data[username]:
-                # Get pnumber for this date if exists
                 pnum = pnumber_per_date.get(date_key, None)
                 pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
                 
@@ -1086,12 +1210,13 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         msg.append(f"{num:02d} ➤ {amt}")
                     total_amount += amt
             
-            msg.append(f"\n💵 စုစုပေါင်း: {total_amount}")
-            
-            if pnumber_total > 0:
-                msg.append(f"🔴 Power Number စုစုပေါင်း: {pnumber_total}")
-            
-            await query.edit_message_text("\n".join(msg))
+            if len(msg) > 1:
+                msg.append(f"\n💵 စုစုပေါင်း: {total_amount}")
+                if pnumber_total > 0:
+                    msg.append(f"🔴 Power Number စုစုပေါင်း: {pnumber_total}")
+                await query.edit_message_text("\n".join(msg))
+            else:
+                await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
         else:
             await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
             
@@ -1107,31 +1232,25 @@ async def dateall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         # Get all unique dates from user_data
-        all_dates = set()
-        for user in user_data:
-            for date_key in user_data[user]:
-                all_dates.add(date_key)
-                
+        all_dates = get_available_dates()
+        
         if not all_dates:
             await update.message.reply_text("ℹ️ မည်သည့်စာရင်းမှ မရှိသေးပါ")
             return
             
         # Initialize selection dictionary
-        dateall_selections[update.effective_user.id] = {date: False for date in all_dates}
-        
-        # Sort dates in reverse chronological order (newest first)
-        sorted_dates = sorted(all_dates, reverse=True)
+        dateall_selections = {date: False for date in all_dates}
+        context.user_data['dateall_selections'] = dateall_selections
         
         # Build message with checkboxes
         msg = ["📅 စာရင်းရှိသည့်နေ့ရက်များကို ရွေးချယ်ပါ:"]
         buttons = []
         
-        for date in sorted_dates:
-            # Get pnumber for this date if exists
+        for date in all_dates:
             pnum = pnumber_per_date.get(date, None)
             pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
             
-            is_selected = dateall_selections[update.effective_user.id][date]
+            is_selected = dateall_selections[date]
             button_text = f"{date}{pnum_str} {'✅' if is_selected else '⬜'}"
             buttons.append([InlineKeyboardButton(button_text, callback_data=f"dateall_toggle:{date}")])
         
@@ -1150,27 +1269,25 @@ async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         _, date_key = query.data.split(':')
-        user_id = query.from_user.id
+        dateall_selections = context.user_data.get('dateall_selections', {})
         
-        if user_id not in dateall_selections or date_key not in dateall_selections[user_id]:
-            await query.edit_message_text("❌ Error: Selection data not found")
+        if date_key not in dateall_selections:
+            await query.edit_message_text("❌ Error: Date not found")
             return
             
         # Toggle selection status
-        dateall_selections[user_id][date_key] = not dateall_selections[user_id][date_key]
+        dateall_selections[date_key] = not dateall_selections[date_key]
+        context.user_data['dateall_selections'] = dateall_selections
         
         # Rebuild the message with updated selections
         msg = ["📅 စာရင်းရှိသည့်နေ့ရက်များကို ရွေးချယ်ပါ:"]
         buttons = []
         
-        # Sort dates in reverse chronological order
-        sorted_dates = sorted(dateall_selections[user_id].keys(), reverse=True)
-        
-        for date in sorted_dates:
+        for date in dateall_selections.keys():
             pnum = pnumber_per_date.get(date, None)
             pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
             
-            is_selected = dateall_selections[user_id][date]
+            is_selected = dateall_selections[date]
             button_text = f"{date}{pnum_str} {'✅' if is_selected else '⬜'}"
             buttons.append([InlineKeyboardButton(button_text, callback_data=f"dateall_toggle:{date}")])
         
@@ -1188,14 +1305,10 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     try:
-        user_id = query.from_user.id
+        dateall_selections = context.user_data.get('dateall_selections', {})
         
-        if user_id not in dateall_selections:
-            await query.edit_message_text("❌ Error: Selection data not found")
-            return
-            
         # Get selected dates
-        selected_dates = [date for date, selected in dateall_selections[user_id].items() if selected]
+        selected_dates = [date for date, selected in dateall_selections.items() if selected]
         
         if not selected_dates:
             await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
@@ -1220,12 +1333,13 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if pnum is not None and num == pnum:
                             user_power_total += amt
             
-            user_totals[user] = {
-                'total': user_total,
-                'power_total': user_power_total
-            }
-            overall_total += user_total
-            overall_power_total += user_power_total
+            if user_total > 0:
+                user_totals[user] = {
+                    'total': user_total,
+                    'power_total': user_power_total
+                }
+                overall_total += user_total
+                overall_power_total += user_power_total
         
         # Build report
         msg = ["📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
@@ -1237,14 +1351,207 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg.append(f"  🔴 Power Number စုစုပေါင်း: {data['power_total']}")
             msg.append("")
         
-        msg.append(f"📊 စုစုပေါင်း:")
-        msg.append(f"  💵 လောင်းကြေးစုစုပေါင်း: {overall_total}")
-        msg.append(f"  🔴 Power Number စုစုပေါင်း: {overall_power_total}")
-        
-        await query.edit_message_text("\n".join(msg))
+        if user_totals:
+            msg.append(f"📊 စုစုပေါင်း:")
+            msg.append(f"  💵 လောင်းကြေးစုစုပေါင်း: {overall_total}")
+            msg.append(f"  🔴 Power Number စုစုပေါင်း: {overall_power_total}")
+            await query.edit_message_text("\n".join(msg))
+        else:
+            await query.edit_message_text("ℹ️ ရွေးချယ်ထားသည့် နေ့ရက်များတွင် ဒေတာမရှိပါ")
         
     except Exception as e:
         logger.error(f"Error in dateall_view: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id, current_working_date
+    try:
+        if update.effective_user.id != admin_id:
+            await update.message.reply_text("❌ Admin only command")
+            return
+            
+        # Get all available dates
+        available_dates = get_available_dates()
+        
+        if not available_dates:
+            await update.message.reply_text("ℹ️ မည်သည့်စာရင်းမှ မရှိသေးပါ")
+            return
+            
+        buttons = []
+        for date in available_dates:
+            pnum = pnumber_per_date.get(date, None)
+            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+            is_current = (date == current_working_date)
+            button_text = f"{date}{pnum_str}{' ✅' if is_current else ''}"
+            buttons.append([InlineKeyboardButton(button_text, callback_data=f"cdate_set:{date}")])
+        
+        buttons.append([InlineKeyboardButton("Open Current", callback_data="cdate_open")])
+        reply_markup = InlineKeyboardMarkup(buttons)
+        
+        await update.message.reply_text("👉 ပြောင်းလိုသောနေ့ရက်ကိုရွေးချယ်ပါ:", reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in change_working_date: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def set_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        global current_working_date
+        _, date_key = query.data.split(':')
+        current_working_date = date_key
+        await query.edit_message_text(f"✅ လက်ရှိ အလုပ်လုပ်ရမည့်နေ့ရက်ကို {date_key} အဖြစ်ပြောင်းလိုက်ပါပြီ")
+    except Exception as e:
+        logger.error(f"Error in set_working_date: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def open_current_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        global current_working_date
+        current_working_date = get_current_date_key()
+        await query.edit_message_text(f"✅ လက်ရှိ အလုပ်လုပ်ရမည့်နေ့ရက်ကို {current_working_date} အဖြစ်ပြောင်းလိုက်ပါပြီ")
+    except Exception as e:
+        logger.error(f"Error in open_current_date: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def delete_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id
+    try:
+        if update.effective_user.id != admin_id:
+            await update.message.reply_text("❌ Admin only command")
+            return
+            
+        # Get all available dates
+        available_dates = get_available_dates()
+        
+        if not available_dates:
+            await update.message.reply_text("ℹ️ မည်သည့်စာရင်းမှ မရှိသေးပါ")
+            return
+            
+        # Initialize selection dictionary
+        datedelete_selections = {date: False for date in available_dates}
+        context.user_data['datedelete_selections'] = datedelete_selections
+        
+        # Build message with checkboxes
+        msg = ["🗑 ဖျက်လိုသောနေ့ရက်များကို ရွေးချယ်ပါ:"]
+        buttons = []
+        
+        for date in available_dates:
+            pnum = pnumber_per_date.get(date, None)
+            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+            
+            is_selected = datedelete_selections[date]
+            button_text = f"{date}{pnum_str} {'✅' if is_selected else '⬜'}"
+            buttons.append([InlineKeyboardButton(button_text, callback_data=f"datedelete_toggle:{date}")])
+        
+        buttons.append([InlineKeyboardButton("✅ Delete Selected", callback_data="datedelete_confirm")])
+        reply_markup = InlineKeyboardMarkup(buttons)
+        
+        await update.message.reply_text("\n".join(msg), reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in delete_date: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def datedelete_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        _, date_key = query.data.split(':')
+        datedelete_selections = context.user_data.get('datedelete_selections', {})
+        
+        if date_key not in datedelete_selections:
+            await query.edit_message_text("❌ Error: Date not found")
+            return
+            
+        # Toggle selection status
+        datedelete_selections[date_key] = not datedelete_selections[date_key]
+        context.user_data['datedelete_selections'] = datedelete_selections
+        
+        # Rebuild the message with updated selections
+        msg = ["🗑 ဖျက်လိုသောနေ့ရက်များကို ရွေးချယ်ပါ:"]
+        buttons = []
+        
+        for date in datedelete_selections.keys():
+            pnum = pnumber_per_date.get(date, None)
+            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+            
+            is_selected = datedelete_selections[date]
+            button_text = f"{date}{pnum_str} {'✅' if is_selected else '⬜'}"
+            buttons.append([InlineKeyboardButton(button_text, callback_data=f"datedelete_toggle:{date}")])
+        
+        buttons.append([InlineKeyboardButton("✅ Delete Selected", callback_data="datedelete_confirm")])
+        reply_markup = InlineKeyboardMarkup(buttons)
+        
+        await query.edit_message_text("\n".join(msg), reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in datedelete_toggle: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def datedelete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        datedelete_selections = context.user_data.get('datedelete_selections', {})
+        
+        # Get selected dates
+        selected_dates = [date for date, selected in datedelete_selections.items() if selected]
+        
+        if not selected_dates:
+            await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
+            return
+            
+        # Delete data for selected dates
+        for date_key in selected_dates:
+            # Remove from user_data
+            for user in list(user_data.keys()):
+                if date_key in user_data[user]:
+                    del user_data[user][date_key]
+                # Remove user if no dates left
+                if not user_data[user]:
+                    del user_data[user]
+            
+            # Remove from ledger
+            if date_key in ledger:
+                del ledger[date_key]
+            
+            # Remove from break_limits
+            if date_key in break_limits:
+                del break_limits[date_key]
+            
+            # Remove from pnumber_per_date
+            if date_key in pnumber_per_date:
+                del pnumber_per_date[date_key]
+            
+            # Remove from date_control
+            if date_key in date_control:
+                del date_control[date_key]
+            
+            # Remove from overbuy_list
+            if date_key in overbuy_list:
+                del overbuy_list[date_key]
+            
+            # Remove from overbuy_selections
+            if date_key in overbuy_selections:
+                del overbuy_selections[date_key]
+        
+        # Clear current working date if it was deleted
+        global current_working_date
+        if current_working_date in selected_dates:
+            current_working_date = None
+        
+        await query.edit_message_text(f"✅ အောက်ပါနေ့ရက်များ ဖျက်ပြီးပါပြီ:\n{', '.join(selected_dates)}")
+        
+    except Exception as e:
+        logger.error(f"Error in datedelete_confirm: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
 
 if __name__ == "__main__":
@@ -1269,6 +1576,8 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("reset", reset_data))
     app.add_handler(CommandHandler("posthis", posthis))
     app.add_handler(CommandHandler("dateall", dateall))
+    app.add_handler(CommandHandler("Cdate", change_working_date))  # New command
+    app.add_handler(CommandHandler("Ddate", delete_date))         # New command
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(comza_input, pattern=r"^comza:"))
@@ -1282,6 +1591,10 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(posthis_callback, pattern=r"^posthis:"))
     app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
     app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
+    app.add_handler(CallbackQueryHandler(set_working_date, pattern=r"^cdate_set:"))
+    app.add_handler(CallbackQueryHandler(open_current_date, pattern=r"^cdate_open$"))
+    app.add_handler(CallbackQueryHandler(datedelete_toggle, pattern=r"^datedelete_toggle:"))
+    app.add_handler(CallbackQueryHandler(datedelete_confirm, pattern=r"^datedelete_confirm$"))
 
     # Message handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
@@ -1289,4 +1602,3 @@ if __name__ == "__main__":
 
     logger.info("🚀 Bot is starting...")
     app.run_polling()
-    
