@@ -136,6 +136,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         total_amount += amt * 2
                         i += 3
                         continue
+
+
+                   if any(sep in entry for sep in ['/', '-']) and 'r' in entry:
+                # Split by both / and -
+                tokens = re.split(r'[/-]', entry)
+                
+                if len(tokens) >= 3 and tokens[-1].count('r') == 1:
+                    amount_parts = tokens[-1].split('r')
+                    
+                    if len(amount_parts) == 2 and amount_parts[0].isdigit() and amount_parts[1].isdigit():
+                        amt1 = int(amount_parts[0])
+                        amt2 = int(amount_parts[1])
+                        numbers = tokens[:-1]
+                        
+                        valid = True
+                        for num_str in numbers:
+                            if not num_str.isdigit() or not (0 <= int(num_str) <= 99):
+                                valid = False
+                                break
+                        
+                        if valid:
+                            for num_str in numbers:
+                                num = int(num_str)
+                                rev = reverse_number(num)
+                                bets.append(f"{num:02d}-{amt1}")
+                                bets.append(f"{rev:02d}-{amt2}")
+                                total_amount += amt1 + amt2
+                            i += 1
+                            continue
+            
             
             if '/' in entry:
                 parts = entry.split('/')
