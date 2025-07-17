@@ -127,9 +127,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         while i < len(entries):
             entry = entries[i]
             
-            # Handle combined formats like 12/34/56/90/1000r500
+            # Improved handling for formats like 67/34/12/1000r500
             if '/' in entry and 'r' in entry:
                 parts = entry.split('/')
+                # Find the part with 'r'
                 r_index = -1
                 for j, part in enumerate(parts):
                     if 'r' in part:
@@ -144,24 +145,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             if 0 <= num <= 99:
                                 numbers.append(num)
                     
-                    if parts[r_index].replace('r', '').isdigit():
-                        r_value = int(parts[r_index].replace('r', ''))
-                        if 0 <= r_value <= 99:
-                            numbers.append(r_value)
-                            rev = reverse_number(r_value)
-                            numbers.append(rev)
-                    
-                    if numbers and r_index + 1 < len(parts) and parts[r_index + 1].isdigit():
-                        amt = int(parts[r_index + 1])
-                        for num in numbers:
-                            bets.append(f"{num:02d}-{amt}")
-                            total_amount += amt
-                        i += r_index + 2
-                        continue
+                    if parts[r_index].count('r') == 1:
+                        amt_parts = parts[r_index].split('r')
+                        if len(amt_parts) == 2 and amt_parts[0].isdigit() and amt_parts[1].isdigit():
+                            base_amt = int(amt_parts[0])
+                            reverse_amt = int(amt_parts[1])
+                            
+                            for num in numbers:
+                                bets.append(f"{num:02d}-{base_amt}")
+                                rev = reverse_number(num)
+                                bets.append(f"{rev:02d}-{reverse_amt}")
+                                total_amount += base_amt + reverse_amt
+                            
+                            # Check if there's a next part for additional reverse
+                            if r_index + 1 < len(parts) and parts[r_index+1].isdigit():
+                                extra_rev_amt = int(parts[r_index+1])
+                                for num in numbers:
+                                    rev = reverse_number(num)
+                                    bets.append(f"{rev:02d}-{extra_rev_amt}")
+                                    total_amount += extra_rev_amt
+                                i += 1  # Skip extra amount
+                                
+                            i += 1
+                            continue
             
-            # Handle format like 12-34-56-90-1000r500
+            # Improved handling for formats like 12-34-56-100r200
             if '-' in entry and 'r' in entry:
                 parts = entry.split('-')
+                # Find the part with 'r'
                 r_index = -1
                 for j, part in enumerate(parts):
                     if 'r' in part:
@@ -176,22 +187,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             if 0 <= num <= 99:
                                 numbers.append(num)
                     
-                    if parts[r_index].replace('r', '').isdigit():
-                        r_value = int(parts[r_index].replace('r', ''))
-                        if 0 <= r_value <= 99:
-                            numbers.append(r_value)
-                            rev = reverse_number(r_value)
-                            numbers.append(rev)
-                    
-                    if numbers and r_index + 1 < len(parts) and parts[r_index + 1].isdigit():
-                        amt = int(parts[r_index + 1])
-                        for num in numbers:
-                            bets.append(f"{num:02d}-{amt}")
-                            total_amount += amt
-                        i += r_index + 2
-                        continue
+                    if parts[r_index].count('r') == 1:
+                        amt_parts = parts[r_index].split('r')
+                        if len(amt_parts) == 2 and amt_parts[0].isdigit() and amt_parts[1].isdigit():
+                            base_amt = int(amt_parts[0])
+                            reverse_amt = int(amt_parts[1])
+                            
+                            for num in numbers:
+                                bets.append(f"{num:02d}-{base_amt}")
+                                rev = reverse_number(num)
+                                bets.append(f"{rev:02d}-{reverse_amt}")
+                                total_amount += base_amt + reverse_amt
+                            
+                            # Check if there's a next part for additional reverse
+                            if r_index + 1 < len(parts) and parts[r_index+1].isdigit():
+                                extra_rev_amt = int(parts[r_index+1])
+                                for num in numbers:
+                                    rev = reverse_number(num)
+                                    bets.append(f"{rev:02d}-{extra_rev_amt}")
+                                    total_amount += extra_rev_amt
+                                i += 1  # Skip extra amount
+                                
+                            i += 1
+                            continue
             
-            # Original parsing logic
+            # Original parsing logic with improvements
             if i + 2 < len(entries):
                 if (entries[i].isdigit() and entries[i+1].isdigit() and entries[i+2].isdigit()):
                     num1 = int(entries[i])
@@ -238,8 +258,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         bets.append(f"{num:02d}-{amt}")
                         bets.append(f"{rev:02d}-{amt}")
                         total_amount += amt * 2
-                        i += 1
-                        continue
+                    i += 1
+                    continue
             
             if 'r' in entry and '-' in entry:
                 main_part, r_part = entry.split('r', 1)
@@ -254,7 +274,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             bets.append(f"{num:02d}-{amt1}")
                             bets.append(f"{rev:02d}-{amt2}")
                             total_amount += amt1 + amt2
-                            i += 1
+                        i += 1
                         continue
             
             if entry.isdigit() and i+1 < len(entries) and 'r' in entries[i+1]:
@@ -1269,3 +1289,4 @@ if __name__ == "__main__":
 
     logger.info("🚀 Bot is starting...")
     app.run_polling()
+    
