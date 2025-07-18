@@ -10,30 +10,34 @@ import pytz
 import re
 import calendar
 
+# Environment variable
 TOKEN = os.getenv("BOT_TOKEN")
 
+# Logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+# Timezone setup
 MYANMAR_TIMEZONE = pytz.timezone('Asia/Yangon')
 
+# Globals
 admin_id = None
-user_data = {}
-break_limits = {}
-pnumber_per_date = {}
-date_control = {}
-overbuy_list = {}
-message_store = {}
-overbuy_selections = {}
-current_working_date = None
+user_data = {}  # {username: {date_key: [(num, amt)]}}
+ledger = {}     # {date_key: {number: total_amount}}
+break_limits = {}  # {date_key: limit}
+pnumber_per_date = {}  # {date_key: power_number}
+date_control = {}  # {date_key: True/False}
+overbuy_list = {}  # {date_key: {username: {num: amount}}}
+message_store = {}  # {(user_id, message_id): (sent_message_id, bets, total_amount, date_key)}
+overbuy_selections = {}  # {date_key: {username: {num: amount}}}
+current_working_date = None  # For admin date selection
+
+# Com and Za data
 com_data = {}
 za_data = {}
-closed_numbers = {}
-user_break_limits = {}
-betting_on_behalf = {}
 
 def reverse_number(n):
     s = str(n).zfill(2)
@@ -47,39 +51,18 @@ def get_current_date_key():
     now = datetime.now(MYANMAR_TIMEZONE)
     return f"{now.strftime('%d/%m/%Y')} {get_time_segment()}"
 
-def get_ledger(date_key):
-    ledger_dict = {}
-    for username, data in user_data.items():
-        if date_key in data:
-            for num, amt in data[date_key]:
-                ledger_dict[num] = ledger_dict.get(num, 0) + amt
-    return ledger_dict
-
 def get_available_dates():
     dates = set()
+    # Get dates from user data
     for user_data_dict in user_data.values():
         dates.update(user_data_dict.keys())
+    # Get dates from ledger
+    dates.update(ledger.keys())
+    # Get dates from break limits
     dates.update(break_limits.keys())
+    # Get dates from pnumber
     dates.update(pnumber_per_date.keys())
-    dates.update(closed_numbers.keys())
-    dates.update(user_break_limits.keys())
     return sorted(dates, reverse=True)
-
-def is_number_closed(date_key, number):
-    if date_key in closed_numbers:
-        return number in closed_numbers[date_key]
-    return False
-
-def is_user_over_limit(username, date_key, number, amount):
-    if date_key in user_break_limits and username in user_break_limits[date_key]:
-        user_limit = user_break_limits[date_key][username]
-        current_total = 0
-        if username in user_data and date_key in user_data[username]:
-            for num, amt in user_data[username][date_key]:
-                if num == number:
-                    current_total += amt
-        return (current_total + amount) > user_limit
-    return False
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
@@ -91,8 +74,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["/comandza", "/total"],
             ["/tsent", "/alldata"],
             ["/reset", "/posthis", "/dateall"],
-            ["/Cdate", "/Ddate"],
-            ["/operations"]
+            ["/Cdate", "/Ddate"]  # New date management commands
         ]
     else:
         keyboard = [
@@ -101,20 +83,6 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("မီနူးကိုရွေးချယ်ပါ", reply_markup=reply_markup)
-
-async def operations(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id
-    if update.effective_user.id != admin_id:
-        await update.message.reply_text("❌ Admin only command")
-        return
-        
-    keyboard = [
-        [InlineKeyboardButton("ဟော့ဂဏန်းပိတ်ရန်", callback_data="close_hot_numbers")],
-        [InlineKeyboardButton("ဘရိတ်ကန့်သတ်ရန်", callback_data="set_user_break")],
-        [InlineKeyboardButton("ကိုယ်စားထည့်ပေးရန်", callback_data="place_bet_behalf")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Admin Operations Menu:", reply_markup=reply_markup)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, current_working_date
@@ -151,13 +119,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         text = update.message.text
         
-        if user.id in betting_on_behalf and betting_on_behalf[user.id]['state'] == 'waiting_for_bet':
-            username = betting_on_behalf[user.id]['user']
-            context.user_data['bet_on_behalf_user'] = username
-            del betting_on_behalf[user.id]
-            await process_bet(update, context, username)
-            return
-        
         if not user or not user.username:
             await update.message.reply_text("❌ ကျေးဇူးပြု၍ Telegram username သတ်မှတ်ပါ")
             return
@@ -171,343 +132,306 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ မက်ဆေ့ဂျ်မရှိပါ")
             return
 
-        await process_bet(update, context, user.username)
+        if any(c in text for c in ['%', '&', '*', '$']):
+            await update.message.reply_text("⚠️ မှားနေပါတယ်\nအထူးသင်္ကေတများ (%&*$) မပါရပါ\nဥပမာ: 12-500")
+            return
+
+        entries = text.split()
+        bets = []
+        total_amount = 0
+
+        i = 0
+        while i < len(entries):
+            entry = entries[i]
+            
+            # Improved handling for formats like 67/34/12/1000r500
+            if '/' in entry and 'r' in entry:
+                parts = entry.split('/')
+                # Find the part with 'r'
+                r_index = -1
+                for j, part in enumerate(parts):
+                    if 'r' in part:
+                        r_index = j
+                        break
+                
+                if r_index > 0:
+                    numbers = []
+                    for j in range(r_index):
+                        if parts[j].isdigit():
+                            num = int(parts[j])
+                            if 0 <= num <= 99:
+                                numbers.append(num)
+                    
+                    if parts[r_index].count('r') == 1:
+                        amt_parts = parts[r_index].split('r')
+                        if len(amt_parts) == 2 and amt_parts[0].isdigit() and amt_parts[1].isdigit():
+                            base_amt = int(amt_parts[0])
+                            reverse_amt = int(amt_parts[1])
+                            
+                            for num in numbers:
+                                bets.append(f"{num:02d}-{base_amt}")
+                                rev = reverse_number(num)
+                                bets.append(f"{rev:02d}-{reverse_amt}")
+                                total_amount += base_amt + reverse_amt
+                            
+                            # Check if there's a next part for additional reverse
+                            if r_index + 1 < len(parts) and parts[r_index+1].isdigit():
+                                extra_rev_amt = int(parts[r_index+1])
+                                for num in numbers:
+                                    rev = reverse_number(num)
+                                    bets.append(f"{rev:02d}-{extra_rev_amt}")
+                                    total_amount += extra_rev_amt
+                                i += 1  # Skip extra amount
+                                
+                            i += 1
+                            continue
+            
+            # Improved handling for formats like 12-34-56-100r200
+            if '-' in entry and 'r' in entry:
+                parts = entry.split('-')
+                # Find the part with 'r'
+                r_index = -1
+                for j, part in enumerate(parts):
+                    if 'r' in part:
+                        r_index = j
+                        break
+                
+                if r_index > 0:
+                    numbers = []
+                    for j in range(r_index):
+                        if parts[j].isdigit():
+                            num = int(parts[j])
+                            if 0 <= num <= 99:
+                                numbers.append(num)
+                    
+                    if parts[r_index].count('r') == 1:
+                        amt_parts = parts[r_index].split('r')
+                        if len(amt_parts) == 2 and amt_parts[0].isdigit() and amt_parts[1].isdigit():
+                            base_amt = int(amt_parts[0])
+                            reverse_amt = int(amt_parts[1])
+                            
+                            for num in numbers:
+                                bets.append(f"{num:02d}-{base_amt}")
+                                rev = reverse_number(num)
+                                bets.append(f"{rev:02d}-{reverse_amt}")
+                                total_amount += base_amt + reverse_amt
+                            
+                            # Check if there's a next part for additional reverse
+                            if r_index + 1 < len(parts) and parts[r_index+1].isdigit():
+                                extra_rev_amt = int(parts[r_index+1])
+                                for num in numbers:
+                                    rev = reverse_number(num)
+                                    bets.append(f"{rev:02d}-{extra_rev_amt}")
+                                    total_amount += extra_rev_amt
+                                i += 1  # Skip extra amount
+                                
+                            i += 1
+                            continue
+            
+            # Original parsing logic with improvements
+            if i + 2 < len(entries):
+                if (entries[i].isdigit() and entries[i+1].isdigit() and entries[i+2].isdigit()):
+                    num1 = int(entries[i])
+                    num2 = int(entries[i+1])
+                    amt = int(entries[i+2])
+                    
+                    if 0 <= num1 <= 99 and 0 <= num2 <= 99:
+                        bets.append(f"{num1:02d}-{amt}")
+                        bets.append(f"{num2:02d}-{amt}")
+                        total_amount += amt * 2
+                        i += 3
+                        continue
+            
+            if '/' in entry:
+                parts = entry.split('/')
+                if len(parts) >= 3 and all(p.isdigit() for p in parts):
+                    amt = int(parts[-1])
+                    for num_str in parts[:-1]:
+                        num = int(num_str)
+                        if 0 <= num <= 99:
+                            bets.append(f"{num:02d}-{amt}")
+                            total_amount += amt
+                    i += 1
+                    continue
+            
+            if '-' in entry and 'r' not in entry:
+                parts = entry.split('-')
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    num = int(parts[0])
+                    amt = int(parts[1])
+                    if 0 <= num <= 99:
+                        bets.append(f"{num:02d}-{amt}")
+                        total_amount += amt
+                        i += 1
+                        continue
+            
+            if 'r' in entry and '-' not in entry:
+                parts = entry.split('r')
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    num = int(parts[0])
+                    amt = int(parts[1])
+                    rev = reverse_number(num)
+                    if 0 <= num <= 99:
+                        bets.append(f"{num:02d}-{amt}")
+                        bets.append(f"{rev:02d}-{amt}")
+                        total_amount += amt * 2
+                    i += 1
+                    continue
+            
+            if 'r' in entry and '-' in entry:
+                main_part, r_part = entry.split('r', 1)
+                if '-' in main_part:
+                    num_part, amt_part = main_part.split('-')
+                    if num_part.isdigit() and amt_part.isdigit() and r_part.isdigit():
+                        num = int(num_part)
+                        amt1 = int(amt_part)
+                        amt2 = int(r_part)
+                        rev = reverse_number(num)
+                        if 0 <= num <= 99:
+                            bets.append(f"{num:02d}-{amt1}")
+                            bets.append(f"{rev:02d}-{amt2}")
+                            total_amount += amt1 + amt2
+                        i += 1
+                        continue
+            
+            if entry.isdigit() and i+1 < len(entries) and 'r' in entries[i+1]:
+                num = int(entry)
+                r_part = entries[i+1]
+                if r_part.count('r') == 1:
+                    amt_part1, amt_part2 = r_part.split('r')
+                    if amt_part1.isdigit() and amt_part2.isdigit():
+                        amt1 = int(amt_part1)
+                        amt2 = int(amt_part2)
+                        rev = reverse_number(num)
+                        if 0 <= num <= 99:
+                            bets.append(f"{num:02d}-{amt1}")
+                            bets.append(f"{rev:02d}-{amt2}")
+                            total_amount += amt1 + amt2
+                        i += 2
+                        continue
+            
+            if 'အခွေ' in entry or 'အပူးပါအခွေ' in entry:
+                base = entry.replace('အခွေ', '').replace('အပူးပါ', '')
+                if base.isdigit() and len(base) >= 2:
+                    digits = [int(d) for d in base]
+                    pairs = []
+                    for j in range(len(digits)):
+                        for k in range(len(digits)):
+                            if j != k:
+                                combo = digits[j] * 10 + digits[k]
+                                if combo not in pairs:
+                                    pairs.append(combo)
+                    
+                    if 'အပူးပါအခွေ' in entry:
+                        for d in digits:
+                            double = d * 10 + d
+                            if double not in pairs:
+                                pairs.append(double)
+                    
+                    if i+1 < len(entries) and entries[i+1].isdigit():
+                        amt = int(entries[i+1])
+                        for num in pairs:
+                            bets.append(f"{num:02d}-{amt}")
+                            total_amount += amt
+                        i += 2
+                        continue
+            
+            fixed_special_cases = {
+                "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
+                "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
+                "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+                "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
+                "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
+            }
+            
+            if entry in fixed_special_cases:
+                if i+1 < len(entries) and entries[i+1].isdigit():
+                    amt = int(entries[i+1])
+                    for num in fixed_special_cases[entry]:
+                        bets.append(f"{num:02d}-{amt}")
+                        total_amount += amt
+                    i += 2
+                    continue
+            
+            dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
+            found_dynamic = False
+            for dtype in dynamic_types:
+                if entry.endswith(dtype):
+                    prefix = entry[:-len(dtype)]
+                    if prefix.isdigit():
+                        digit_val = int(prefix)
+                        if 0 <= digit_val <= 9:
+                            numbers = []
+                            if dtype == "ထိပ်":
+                                numbers = [digit_val * 10 + j for j in range(10)]
+                            elif dtype == "ပိတ်":
+                                numbers = [j * 10 + digit_val for j in range(10)]
+                            elif dtype == "ဘရိတ်":
+                                numbers = [n for n in range(100) if (n//10 + n%10) % 10 == digit_val]
+                            elif dtype == "အပါ":
+                                tens = [digit_val * 10 + j for j in range(10)]
+                                units = [j * 10 + digit_val for j in range(10)]
+                                numbers = list(set(tens + units))
+                            
+                            if i+1 < len(entries) and entries[i+1].isdigit():
+                                amt = int(entries[i+1])
+                                for num in numbers:
+                                    bets.append(f"{num:02d}-{amt}")
+                                    total_amount += amt
+                                i += 2
+                                found_dynamic = True
+                            break
+            if found_dynamic:
+                continue
+            
+            if entry.isdigit():
+                num = int(entry)
+                if 0 <= num <= 99:
+                    if i+1 < len(entries) and entries[i+1].isdigit():
+                        amt = int(entries[i+1])
+                        bets.append(f"{num:02d}-{amt}")
+                        total_amount += amt
+                        i += 2
+                    else:
+                        bets.append(f"{num:02d}-500")
+                        total_amount += 500
+                        i += 1
+                    continue
+            
+            i += 1
+
+        if user.username not in user_data:
+            user_data[user.username] = {}
+        if key not in user_data[user.username]:
+            user_data[user.username][key] = []
+
+        # Initialize ledger for this date if not exists
+        if key not in ledger:
+            ledger[key] = {}
+
+        for bet in bets:
+            num, amt = bet.split('-')
+            num = int(num)
+            amt = int(amt)
+            
+            # Update ledger for this date
+            ledger[key][num] = ledger[key].get(num, 0) + amt
+            
+            # Update user data
+            user_data[user.username][key].append((num, amt))
+
+        if bets:
+            response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
+            keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
+            message_store[(user.id, update.message.message_id)] = (sent_message.message_id, bets, total_amount, key)
+        else:
+            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ")
             
     except Exception as e:
         logger.error(f"Error in handle_message: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
-
-async def process_bet(update: Update, context: ContextTypes.DEFAULT_TYPE, username: str):
-    text = update.message.text
-    key = get_current_date_key()
-    
-    if key not in closed_numbers:
-        closed_numbers[key] = set()
-    
-    if any(c in text for c in ['%', '&', '*', '$']):
-        await update.message.reply_text("⚠️ မှားနေပါတယ်\nအထူးသင်္ကေတများ (%&*$) မပါရပါ\nဥပမာ: 12-500")
-        return
-
-    entries = text.split()
-    bets = []
-    total_amount = 0
-    rejected_bets = []
-    
-    i = 0
-    while i < len(entries):
-        entry = entries[i]
-        
-        if '/' in entry and 'r' in entry:
-            parts = entry.split('/')
-            r_index = -1
-            for j, part in enumerate(parts):
-                if 'r' in part:
-                    r_index = j
-                    break
-            
-            if r_index > 0:
-                numbers = []
-                for j in range(r_index):
-                    if parts[j].isdigit():
-                        num = int(parts[j])
-                        if 0 <= num <= 99:
-                            numbers.append(num)
-                
-                if parts[r_index].count('r') == 1:
-                    amt_parts = parts[r_index].split('r')
-                    if len(amt_parts) == 2 and amt_parts[0].isdigit() and amt_parts[1].isdigit():
-                        base_amt = int(amt_parts[0])
-                        reverse_amt = int(amt_parts[1])
-                        
-                        for num in numbers:
-                            bets.append(f"{num:02d}-{base_amt}")
-                            rev = reverse_number(num)
-                            bets.append(f"{rev:02d}-{reverse_amt}")
-                            total_amount += base_amt + reverse_amt
-                        
-                        if r_index + 1 < len(parts) and parts[r_index+1].isdigit():
-                            extra_rev_amt = int(parts[r_index+1])
-                            for num in numbers:
-                                rev = reverse_number(num)
-                                bets.append(f"{rev:02d}-{extra_rev_amt}")
-                                total_amount += extra_rev_amt
-                            i += 1
-                            
-                        i += 1
-                        continue
-        
-        if '-' in entry and 'r' in entry:
-            parts = entry.split('-')
-            r_index = -1
-            for j, part in enumerate(parts):
-                if 'r' in part:
-                    r_index = j
-                    break
-            
-            if r_index > 0:
-                numbers = []
-                for j in range(r_index):
-                    if parts[j].isdigit():
-                        num = int(parts[j])
-                        if 0 <= num <= 99:
-                            numbers.append(num)
-                
-                if parts[r_index].count('r') == 1:
-                    amt_parts = parts[r_index].split('r')
-                    if len(amt_parts) == 2 and amt_parts[0].isdigit() and amt_parts[1].isdigit():
-                        base_amt = int(amt_parts[0])
-                        reverse_amt = int(amt_parts[1])
-                        
-                        for num in numbers:
-                            bets.append(f"{num:02d}-{base_amt}")
-                            rev = reverse_number(num)
-                            bets.append(f"{rev:02d}-{reverse_amt}")
-                            total_amount += base_amt + reverse_amt
-                        
-                        if r_index + 1 < len(parts) and parts[r_index+1].isdigit():
-                            extra_rev_amt = int(parts[r_index+1])
-                            for num in numbers:
-                                rev = reverse_number(num)
-                                bets.append(f"{rev:02d}-{extra_rev_amt}")
-                                total_amount += extra_rev_amt
-                            i += 1
-                            
-                        i += 1
-                        continue
-        
-        if i + 2 < len(entries):
-            if (entries[i].isdigit() and entries[i+1].isdigit() and entries[i+2].isdigit()):
-                num1 = int(entries[i])
-                num2 = int(entries[i+1])
-                amt = int(entries[i+2])
-                
-                if 0 <= num1 <= 99 and 0 <= num2 <= 99:
-                    bets.append(f"{num1:02d}-{amt}")
-                    bets.append(f"{num2:02d}-{amt}")
-                    total_amount += amt * 2
-                    i += 3
-                    continue
-        
-        if '/' in entry:
-            parts = entry.split('/')
-            if len(parts) >= 3 and all(p.isdigit() for p in parts):
-                amt = int(parts[-1])
-                for num_str in parts[:-1]:
-                    num = int(num_str)
-                    if 0 <= num <= 99:
-                        bets.append(f"{num:02d}-{amt}")
-                        total_amount += amt
-                i += 1
-                continue
-        
-        if '-' in entry and 'r' not in entry:
-            parts = entry.split('-')
-            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                num = int(parts[0])
-                amt = int(parts[1])
-                if 0 <= num <= 99:
-                    bets.append(f"{num:02d}-{amt}")
-                    total_amount += amt
-                    i += 1
-                    continue
-        
-        if 'r' in entry and '-' not in entry:
-            parts = entry.split('r')
-            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                num = int(parts[0])
-                amt = int(parts[1])
-                rev = reverse_number(num)
-                if 0 <= num <= 99:
-                    bets.append(f"{num:02d}-{amt}")
-                    bets.append(f"{rev:02d}-{amt}")
-                    total_amount += amt * 2
-                i += 1
-                continue
-        
-        if 'r' in entry and '-' in entry:
-            main_part, r_part = entry.split('r', 1)
-            if '-' in main_part:
-                num_part, amt_part = main_part.split('-')
-                if num_part.isdigit() and amt_part.isdigit() and r_part.isdigit():
-                    num = int(num_part)
-                    amt1 = int(amt_part)
-                    amt2 = int(r_part)
-                    rev = reverse_number(num)
-                    if 0 <= num <= 99:
-                        bets.append(f"{num:02d}-{amt1}")
-                        bets.append(f"{rev:02d}-{amt2}")
-                        total_amount += amt1 + amt2
-                    i += 1
-                    continue
-        
-        if entry.isdigit() and i+1 < len(entries) and 'r' in entries[i+1]:
-            num = int(entry)
-            r_part = entries[i+1]
-            if r_part.count('r') == 1:
-                amt_part1, amt_part2 = r_part.split('r')
-                if amt_part1.isdigit() and amt_part2.isdigit():
-                    amt1 = int(amt_part1)
-                    amt2 = int(amt_part2)
-                    rev = reverse_number(num)
-                    if 0 <= num <= 99:
-                        bets.append(f"{num:02d}-{amt1}")
-                        bets.append(f"{rev:02d}-{amt2}")
-                        total_amount += amt1 + amt2
-                    i += 2
-                    continue
-        
-        if 'အခွေ' in entry or 'အပူးပါအခွေ' in entry:
-            base = entry.replace('အခွေ', '').replace('အပူးပါ', '')
-            if base.isdigit() and len(base) >= 2:
-                digits = [int(d) for d in base]
-                pairs = []
-                for j in range(len(digits)):
-                    for k in range(len(digits)):
-                        if j != k:
-                            combo = digits[j] * 10 + digits[k]
-                            if combo not in pairs:
-                                pairs.append(combo)
-                
-                if 'အပူးပါအခွေ' in entry:
-                    for d in digits:
-                        double = d * 10 + d
-                        if double not in pairs:
-                            pairs.append(double)
-                
-                if i+1 < len(entries) and entries[i+1].isdigit():
-                    amt = int(entries[i+1])
-                    for num in pairs:
-                        bets.append(f"{num:02d}-{amt}")
-                        total_amount += amt
-                    i += 2
-                    continue
-        
-        fixed_special_cases = {
-            "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
-            "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
-            "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-            "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
-            "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
-        }
-        
-        if entry in fixed_special_cases:
-            if i+1 < len(entries) and entries[i+1].isdigit():
-                amt = int(entries[i+1])
-                for num in fixed_special_cases[entry]:
-                    bets.append(f"{num:02d}-{amt}")
-                    total_amount += amt
-                i += 2
-                continue
-        
-        dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
-        found_dynamic = False
-        for dtype in dynamic_types:
-            if entry.endswith(dtype):
-                prefix = entry[:-len(dtype)]
-                if prefix.isdigit():
-                    digit_val = int(prefix)
-                    if 0 <= digit_val <= 9:
-                        numbers = []
-                        if dtype == "ထိပ်":
-                            numbers = [digit_val * 10 + j for j in range(10)]
-                        elif dtype == "ပိတ်":
-                            numbers = [j * 10 + digit_val for j in range(10)]
-                        elif dtype == "ဘရိတ်":
-                            numbers = [n for n in range(100) if (n//10 + n%10) % 10 == digit_val]
-                        elif dtype == "အပါ":
-                            tens = [digit_val * 10 + j for j in range(10)]
-                            units = [j * 10 + digit_val for j in range(10)]
-                            numbers = list(set(tens + units))
-                        
-                        if i+1 < len(entries) and entries[i+1].isdigit():
-                            amt = int(entries[i+1])
-                            for num in numbers:
-                                bets.append(f"{num:02d}-{amt}")
-                                total_amount += amt
-                            i += 2
-                            found_dynamic = True
-                        break
-        if found_dynamic:
-            continue
-        
-        if entry.isdigit():
-            num = int(entry)
-            if 0 <= num <= 99:
-                if i+1 < len(entries) and entries[i+1].isdigit():
-                    amt = int(entries[i+1])
-                    bets.append(f"{num:02d}-{amt}")
-                    total_amount += amt
-                    i += 2
-                else:
-                    bets.append(f"{num:02d}-500")
-                    total_amount += 500
-                    i += 1
-                continue
-        
-        i += 1
-
-    valid_bets = []
-    new_rejected_bets = []
-    total_valid_amount = 0
-
-    for bet in bets:
-        num, amt = bet.split('-')
-        num = int(num)
-        amt = int(amt)
-        
-        if is_number_closed(key, num):
-            new_rejected_bets.append(f"{num:02d}-{amt} (ပိတ်ထားသောဂဏန်း)")
-            continue
-            
-        if is_user_over_limit(username, key, num, amt):
-            if key in user_break_limits and username in user_break_limits[key]:
-                limit = user_break_limits[key][username]
-                current_total = 0
-                if username in user_data and key in user_data[username]:
-                    for n, a in user_data[username][key]:
-                        if n == num:
-                            current_total += a
-                acceptable_amt = limit - current_total
-                if acceptable_amt > 0:
-                    amt = acceptable_amt
-                    new_rejected_bets.append(f"{num:02d}-{amt} (ကန့်သတ်ချက်ကျော် - {acceptable_amt}သာ လက်ခံသည်)")
-                else:
-                    new_rejected_bets.append(f"{num:02d}-{amt} (ကန့်သတ်ချက်ကျော်နေပြီ)")
-                    continue
-            else:
-                new_rejected_bets.append(f"{num:02d}-{amt} (ကန့်သတ်ချက်အမှား)")
-                continue
-        
-        valid_bets.append((num, amt))
-        total_valid_amount += amt
-
-    if username not in user_data:
-        user_data[username] = {}
-    if key not in user_data[username]:
-        user_data[username][key] = []
-
-    for num, amt in valid_bets:
-        user_data[username][key].append((num, amt))
-
-    response_lines = []
-    if valid_bets:
-        response_lines.append("✅ လက်ခံထားသောလောင်းကြေးများ:")
-        for num, amt in valid_bets:
-            response_lines.append(f"{num:02d}-{amt}")
-        response_lines.append(f"စုစုပေါင်း: {total_valid_amount} ကျပ်")
-    
-    if new_rejected_bets:
-        response_lines.append("\n❌ ငြင်းပယ်ထားသောလောင်းကြေးများ:")
-        response_lines.extend(new_rejected_bets)
-    
-    if valid_bets or new_rejected_bets:
-        response = "\n".join(response_lines)
-        keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{update.effective_user.id}:{update.message.message_id}:{key}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
-        message_store[(update.effective_user.id, update.message.message_id)] = (sent_message.message_id, bets, total_amount, key)
-    else:
-        await update.message.reply_text("⚠️ မည်သည့်လောင်းကြေးမှ မရှိပါ (အားလုံးငြင်းပယ်ခံရသည်)")
 
 async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -582,6 +506,7 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ledger[date_key][num] -= amt
                 if ledger[date_key][num] <= 0:
                     del ledger[date_key][num]
+                # Remove date from ledger if empty
                 if not ledger[date_key]:
                     del ledger[date_key]
             
@@ -633,14 +558,15 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to show
         date_key = current_working_date if current_working_date else get_current_date_key()
-        ledger_data = get_ledger(date_key)
         
-        if not ledger_data:
+        if date_key not in ledger:
             await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
             return
             
         lines = [f"📒 {date_key} လက်ကျန်ငွေစာရင်း"]
+        ledger_data = ledger[date_key]
         
         for i in range(100):
             total = ledger_data.get(i, 0)
@@ -668,6 +594,7 @@ async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to work on
         date_key = current_working_date if current_working_date else get_current_date_key()
             
         if not context.args:
@@ -682,11 +609,11 @@ async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break_limits[date_key] = new_limit
             await update.message.reply_text(f"✅ {date_key} အတွက် Break limit ကို {new_limit} အဖြစ်သတ်မှတ်ပြီးပါပြီ")
             
-            ledger_data = get_ledger(date_key)
-            if not ledger_data:
+            if date_key not in ledger:
                 await update.message.reply_text(f"ℹ️ {date_key} အတွက် လောင်းကြေးမရှိသေးပါ")
                 return
                 
+            ledger_data = ledger[date_key]
             msg = [f"📌 {date_key} အတွက် Limit ({new_limit}) ကျော်ဂဏန်းများ:"]
             found = False
             
@@ -714,6 +641,7 @@ async def overbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to work on
         date_key = current_working_date if current_working_date else get_current_date_key()
             
         if not context.args:
@@ -724,8 +652,7 @@ async def overbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚠️ {date_key} အတွက် ကျေးဇူးပြု၍ /break [limit] ဖြင့် limit သတ်မှတ်ပါ")
             return
             
-        ledger_data = get_ledger(date_key)
-        if not ledger_data:
+        if date_key not in ledger:
             await update.message.reply_text(f"ℹ️ {date_key} အတွက် လောင်းကြေးမရှိသေးပါ")
             return
             
@@ -733,6 +660,7 @@ async def overbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['overbuy_username'] = username
         context.user_data['overbuy_date'] = date_key
         
+        ledger_data = ledger[date_key]
         break_limit_val = break_limits[date_key]
         over_numbers = {num: amt - break_limit_val for num, amt in ledger_data.items() if amt > break_limit_val}
         
@@ -921,10 +849,12 @@ async def overbuy_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bets.append(f"{num:02d}-{amt}")
             total_amount += amt
             
+            # Update ledger
             ledger[date_key][num] = ledger[date_key].get(num, 0) - amt
             if ledger[date_key][num] <= 0:
                 del ledger[date_key][num]
         
+        # Initialize overbuy_list for date if needed
         if date_key not in overbuy_list:
             overbuy_list[date_key] = {}
         overbuy_list[date_key][username] = selected_numbers.copy()
@@ -943,6 +873,7 @@ async def pnumber(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to work on
         date_key = current_working_date if current_working_date else get_current_date_key()
             
         if not context.args:
@@ -961,6 +892,7 @@ async def pnumber(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pnumber_per_date[date_key] = num
             await update.message.reply_text(f"✅ {date_key} အတွက် Power Number ကို {num:02d} အဖြစ်သတ်မှတ်ပြီး")
             
+            # Show report for this date
             msg = []
             total_power = 0
             
@@ -1054,6 +986,7 @@ async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to work on
         date_key = current_working_date if current_working_date else get_current_date_key()
             
         if date_key not in pnumber_per_date:
@@ -1117,6 +1050,7 @@ async def tsent(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to work on
         date_key = current_working_date if current_working_date else get_current_date_key()
             
         if not user_data:
@@ -1160,7 +1094,7 @@ async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, current_working_date, closed_numbers, user_break_limits, betting_on_behalf
+    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
@@ -1176,9 +1110,6 @@ async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         break_limits = {}
         pnumber_per_date = {}
         current_working_date = get_current_date_key()
-        closed_numbers = {}
-        user_break_limits = {}
-        betting_on_behalf = {}
         
         await update.message.reply_text("✅ ဒေတာများအားလုံးကို ပြန်လည်သုတ်သင်ပြီး လက်ရှိနေ့သို့ပြန်လည်သတ်မှတ်ပြီးပါပြီ")
     except Exception as e:
@@ -1212,6 +1143,7 @@ async def posthis(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
             return
             
+        # For non-admin, show current date only
         date_key = get_current_date_key() if not is_admin else None
         
         msg = [f"📊 {username} ရဲ့လောင်းကြေးမှတ်တမ်း"]
@@ -1219,6 +1151,7 @@ async def posthis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pnumber_total = 0
         
         if is_admin:
+            # Admin can see all dates
             for date_key in user_data[username]:
                 pnum = pnumber_per_date.get(date_key, None)
                 pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
@@ -1232,6 +1165,7 @@ async def posthis(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         msg.append(f"{num:02d} ➤ {amt}")
                     total_amount += amt
         else:
+            # Non-admin only sees current date
             if date_key in user_data[username]:
                 pnum = pnumber_per_date.get(date_key, None)
                 pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
@@ -1289,7 +1223,7 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
         else:
-            await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
+            await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်း�မရှိပါ")
             
     except Exception as e:
         logger.error(f"Error in posthis_callback: {str(e)}")
@@ -1302,21 +1236,25 @@ async def dateall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Get all unique dates from user_data
         all_dates = get_available_dates()
         
         if not all_dates:
             await update.message.reply_text("ℹ️ မည်သည့်စာရင်းမှ မရှိသေးပါ")
             return
             
+        # Initialize selection dictionary
         dateall_selections = {date: False for date in all_dates}
         context.user_data['dateall_selections'] = dateall_selections
         
+        # Build message with checkboxes
         msg = ["📅 စာရင်းရှိသည့်နေ့ရက်များကို ရွေးချယ်ပါ:"]
         buttons = []
         
         for date in all_dates:
             pnum = pnumber_per_date.get(date, None)
             pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
+            
             is_selected = dateall_selections[date]
             button_text = f"{date}{pnum_str} {'✅' if is_selected else '⬜'}"
             buttons.append([InlineKeyboardButton(button_text, callback_data=f"dateall_toggle:{date}")])
@@ -1342,9 +1280,11 @@ async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Error: Date not found")
             return
             
+        # Toggle selection status
         dateall_selections[date_key] = not dateall_selections[date_key]
         context.user_data['dateall_selections'] = dateall_selections
         
+        # Rebuild the message with updated selections
         msg = ["📅 စာရင်းရှိသည့်နေ့ရက်များကို ရွေးချယ်ပါ:"]
         buttons = []
         
@@ -1372,32 +1312,31 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         dateall_selections = context.user_data.get('dateall_selections', {})
         
+        # Get selected dates
         selected_dates = [date for date, selected in dateall_selections.items() if selected]
         
         if not selected_dates:
             await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
             return
             
+        # Aggregate data for each user across selected dates
         user_totals = {}
         overall_total = 0
         overall_power_total = 0
         
-        for user, records in user_data.items():
+        for user in user_data:
             user_total = 0
             user_power_total = 0
             
             for date in selected_dates:
-                if date in records:
+                if user in user_data and date in user_data[user]:
+                    # Get pnumber for this date if exists
                     pnum = pnumber_per_date.get(date, None)
                     
-                    for num, amt in records[date]:
+                    for num, amt in user_data[user][date]:
                         user_total += amt
                         if pnum is not None and num == pnum:
                             user_power_total += amt
-            
-            if date in overbuy_list and user in overbuy_list[date]:
-                for num, amt in overbuy_list[date][user].items():
-                    user_total += amt
             
             if user_total > 0:
                 user_totals[user] = {
@@ -1407,6 +1346,7 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 overall_total += user_total
                 overall_power_total += user_power_total
         
+        # Build report
         msg = ["📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
         msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
         
@@ -1435,6 +1375,7 @@ async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Admin only command")
             return
         
+        # Show calendar with AM/PM selection
         keyboard = [
             [InlineKeyboardButton("🗓 လက်ရှိလအတွက် ပြက္ခဒိန်", callback_data="cdate_calendar")],
             [InlineKeyboardButton("⏰ AM ရွေးရန်", callback_data="cdate_am")],
@@ -1443,8 +1384,13 @@ async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "👉 လက်ရှိ အလုပ်လုပ်ရမည့်နေ့ရက်ကို ရွေးချယ်ပါ",
-            reply_markup=reply_markup)
+            "👉 လက်ရှိ အလုပ်လုပ်ရမည့်နေ့ရက်ကို ရွေးချယ်ပါ\n"
+            "• ပြက္ခဒိန်ဖြင့်ရွေးရန်: 🗓 ခလုတ်ကိုနှိပ်ပါ\n"
+            "• AM သို့ပြောင်းရန်: ⏰ ခလုတ်ကိုနှိပ်ပါ\n"
+            "• PM သို့ပြောင်းရန်: 🌙 ခလုတ်ကိုနှိပ်ပါ\n"
+            "• ယနေ့သို့ပြန်ရန်: 📆 ခလုတ်ကိုနှိပ်ပါ",
+            reply_markup=reply_markup
+        )
     except Exception as e:
         logger.error(f"Error in change_working_date: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -1457,9 +1403,11 @@ async def show_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         now = datetime.now(MYANMAR_TIMEZONE)
         year, month = now.year, now.month
         
+        # Create calendar header
         cal_header = calendar.month_name[month] + " " + str(year)
         days = ["တနင်္လာ", "အင်္ဂါ", "ဗုဒ္ဓဟူး", "ကြာသပတေး", "သောကြာ", "စနေ", "တနင်္ဂနွေ"]
         
+        # Generate calendar days
         cal = calendar.monthcalendar(year, month)
         keyboard = []
         keyboard.append([InlineKeyboardButton(cal_header, callback_data="ignore")])
@@ -1475,6 +1423,7 @@ async def show_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     week_buttons.append(InlineKeyboardButton(str(day), callback_data=f"cdate_day:{date_str}"))
             keyboard.append(week_buttons)
         
+        # Add navigation and back buttons
         keyboard.append([
             InlineKeyboardButton("⬅️ ယခင်", callback_data="cdate_prev_month"),
             InlineKeyboardButton("➡️ နောက်", callback_data="cdate_next_month")
@@ -1496,6 +1445,7 @@ async def handle_day_selection(update: Update, context: ContextTypes.DEFAULT_TYP
         _, date_str = query.data.split(':')
         context.user_data['selected_date'] = date_str
         
+        # Ask for AM/PM selection
         keyboard = [
             [InlineKeyboardButton("⏰ AM", callback_data="cdate_set_am")],
             [InlineKeyboardButton("🌙 PM", callback_data="cdate_set_pm")],
@@ -1570,6 +1520,7 @@ async def open_current_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Error occurred")
 
 async def navigate_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Placeholder for month navigation
     await update.callback_query.answer()
     await update.callback_query.edit_message_text("ℹ️ လများလှန်ကြည့်ခြင်းအား နောက်ထပ်ဗားရှင်းတွင် ထည့်သွင်းပါမည်")
 
@@ -1585,15 +1536,18 @@ async def delete_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Get all available dates
         available_dates = get_available_dates()
         
         if not available_dates:
             await update.message.reply_text("ℹ️ မည်သည့်စာရင်းမှ မရှိသေးပါ")
             return
             
+        # Initialize selection dictionary
         datedelete_selections = {date: False for date in available_dates}
         context.user_data['datedelete_selections'] = datedelete_selections
         
+        # Build message with checkboxes
         msg = ["🗑 ဖျက်လိုသောနေ့ရက်များကို ရွေးချယ်ပါ:"]
         buttons = []
         
@@ -1626,9 +1580,11 @@ async def datedelete_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Error: Date not found")
             return
             
+        # Toggle selection status
         datedelete_selections[date_key] = not datedelete_selections[date_key]
         context.user_data['datedelete_selections'] = datedelete_selections
         
+        # Rebuild the message with updated selections
         msg = ["🗑 ဖျက်လိုသောနေ့ရက်များကို ရွေးချယ်ပါ:"]
         buttons = []
         
@@ -1656,37 +1612,48 @@ async def datedelete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         datedelete_selections = context.user_data.get('datedelete_selections', {})
         
+        # Get selected dates
         selected_dates = [date for date, selected in datedelete_selections.items() if selected]
         
         if not selected_dates:
             await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
             return
             
+        # Delete data for selected dates
         for date_key in selected_dates:
+            # Remove from user_data
             for user in list(user_data.keys()):
                 if date_key in user_data[user]:
                     del user_data[user][date_key]
+                # Remove user if no dates left
                 if not user_data[user]:
                     del user_data[user]
             
+            # Remove from ledger
             if date_key in ledger:
                 del ledger[date_key]
             
+            # Remove from break_limits
             if date_key in break_limits:
                 del break_limits[date_key]
             
+            # Remove from pnumber_per_date
             if date_key in pnumber_per_date:
                 del pnumber_per_date[date_key]
             
+            # Remove from date_control
             if date_key in date_control:
                 del date_control[date_key]
             
+            # Remove from overbuy_list
             if date_key in overbuy_list:
                 del overbuy_list[date_key]
             
+            # Remove from overbuy_selections
             if date_key in overbuy_selections:
                 del overbuy_selections[date_key]
         
+        # Clear current working date if it was deleted
         global current_working_date
         if current_working_date in selected_dates:
             current_working_date = None
@@ -1697,172 +1664,13 @@ async def datedelete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error(f"Error in datedelete_confirm: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
 
-async def close_hot_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("ပိတ်လိုသောဂဏန်းများကိုထည့်ပါ (ဥပမာ: 12, 34, 56):")
-
-async def handle_close_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    key = get_current_date_key()
-    
-    if key not in closed_numbers:
-        closed_numbers[key] = set()
-    
-    numbers = []
-    for part in text.split(','):
-        part = part.strip()
-        if part.isdigit():
-            num = int(part)
-            if 0 <= num <= 99:
-                numbers.append(num)
-                closed_numbers[key].add(num)
-    
-    if numbers:
-        buttons = []
-        for num in closed_numbers[key]:
-            buttons.append([InlineKeyboardButton(f"{num:02d} ✅", callback_data=f"hotnum_select:{num}")])
-        buttons.append([InlineKeyboardButton("Select All", callback_data="hotnum_select_all")])
-        buttons.append([InlineKeyboardButton("Delete Selected", callback_data="hotnum_delete")])
-        
-        reply_markup = InlineKeyboardMarkup(buttons)
-        await update.message.reply_text(
-            f"✅ ပိတ်ဂဏန်းများ: {', '.join(str(n) for n in numbers)}",
-            reply_markup=reply_markup
-        )
-    else:
-        await update.message.reply_text("⚠️ ဂဏန်းများမတွေ့ပါ")
-
-async def hotnum_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    _, num_str = query.data.split(':')
-    num = int(num_str)
-    key = get_current_date_key()
-    
-    if key in closed_numbers:
-        if num in closed_numbers[key]:
-            closed_numbers[key].remove(num)
-        else:
-            closed_numbers[key].add(num)
-    
-    buttons = []
-    for n in sorted(closed_numbers[key]):
-        buttons.append([InlineKeyboardButton(f"{n:02d} ✅", callback_data=f"hotnum_select:{n}")])
-    buttons.append([InlineKeyboardButton("Select All", callback_data="hotnum_select_all")])
-    buttons.append([InlineKeyboardButton("Delete Selected", callback_data="hotnum_delete")])
-    
-    reply_markup = InlineKeyboardMarkup(buttons)
-    await query.edit_message_text(
-        "ပိတ်ထားသောဂဏန်းများ:",
-        reply_markup=reply_markup
-    )
-
-async def hotnum_select_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    key = get_current_date_key()
-    
-    if key not in closed_numbers:
-        closed_numbers[key] = set()
-    
-    for i in range(100):
-        closed_numbers[key].add(i)
-    
-    buttons = []
-    for n in sorted(closed_numbers[key]):
-        buttons.append([InlineKeyboardButton(f"{n:02d} ✅", callback_data=f"hotnum_select:{n}")])
-    buttons.append([InlineKeyboardButton("Unselect All", callback_data="hotnum_unselect_all")])
-    buttons.append([InlineKeyboardButton("Delete Selected", callback_data="hotnum_delete")])
-    
-    reply_markup = InlineKeyboardMarkup(buttons)
-    await query.edit_message_text(
-        "ဂဏန်းအားလုံးကို ပိတ်ထားပြီး:",
-        reply_markup=reply_markup
-    )
-
-async def hotnum_unselect_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    key = get_current_date_key()
-    
-    if key in closed_numbers:
-        closed_numbers[key] = set()
-    
-    await query.edit_message_text("ပိတ်ထားသောဂဏန်းများအားလုံး ပယ်ဖျက်ပြီးပါပြီ")
-
-async def hotnum_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    key = get_current_date_key()
-    
-    if key in closed_numbers:
-        del closed_numbers[key]
-    
-    await query.edit_message_text("ရွေးချယ်ထားသော ပိတ်ဂဏန်းများ ဖျက်ပြီးပါပြီ")
-
-async def set_user_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if not user_data:
-        await query.edit_message_text("ℹ️ လက်ရှိအသုံးပြုသူမရှိပါ")
-        return
-        
-    users = list(user_data.keys())
-    keyboard = [[InlineKeyboardButton(u, callback_data=f"setbreak:{u}")] for u in users]
-    await query.edit_message_text("ဘရိတ်ကန့်သတ်ချက်ထားရန် user ရွေးပါ:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def handle_set_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    _, username = query.data.split(':')
-    context.user_data['break_user'] = username
-    await query.edit_message_text(f"{username} ၏ ဂဏန်းတစ်ခုချင်းစီအတွက် အများဆုံးလောင်းနိုင်သောပမာဏကိုထည့်ပါ (ဥပမာ: 50000):")
-
-async def handle_break_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    username = context.user_data.get('break_user')
-    key = get_current_date_key()
-    
-    if not username:
-        await update.message.reply_text("❌ အမှားတစ်ခုဖြစ်နေပါသည်")
-        return
-        
-    if text.isdigit():
-        limit = int(text)
-        if key not in user_break_limits:
-            user_break_limits[key] = {}
-        user_break_limits[key][username] = limit
-        await update.message.reply_text(f"✅ {username} ၏ ဂဏန်းတစ်ခုချင်းစီအတွက် အများဆုံးလောင်းနိုင်သောပမာဏ: {limit}")
-    else:
-        await update.message.reply_text("⚠️ နံပါတ်ထည့်ပါ (ဥပမာ: 50000)")
-
-async def place_bet_behalf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if not user_data:
-        await query.edit_message_text("ℹ️ လက်ရှိအသုံးပြုသူမရှိပါ")
-        return
-        
-    users = list(user_data.keys())
-    keyboard = [[InlineKeyboardButton(u, callback_data=f"behalfbet:{u}")] for u in users]
-    await query.edit_message_text("ကိုယ်စားထည့်ပေးရန် user ရွေးပါ:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def handle_behalf_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    _, username = query.data.split(':')
-    betting_on_behalf[update.effective_user.id] = {'user': username, 'state': 'waiting_for_bet'}
-    await query.edit_message_text(f"{username} အတွက် လောင်းကြေးထည့်ပါ:")
-
 if __name__ == "__main__":
     if not TOKEN:
         raise ValueError("❌ BOT_TOKEN environment variable is not set")
         
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Command handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", show_menu))
     app.add_handler(CommandHandler("dateopen", dateopen))
@@ -1878,10 +1686,10 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("reset", reset_data))
     app.add_handler(CommandHandler("posthis", posthis))
     app.add_handler(CommandHandler("dateall", dateall))
-    app.add_handler(CommandHandler("Cdate", change_working_date))
+    app.add_handler(CommandHandler("Cdate", change_working_date))  # Updated command
     app.add_handler(CommandHandler("Ddate", delete_date))
-    app.add_handler(CommandHandler("operations", operations))
 
+    # Callback handlers
     app.add_handler(CallbackQueryHandler(comza_input, pattern=r"^comza:"))
     app.add_handler(CallbackQueryHandler(delete_bet, pattern=r"^delete:"))
     app.add_handler(CallbackQueryHandler(confirm_delete, pattern=r"^confirm_delete:"))
@@ -1893,6 +1701,8 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(posthis_callback, pattern=r"^posthis:"))
     app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
     app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
+    
+    # New calendar handlers
     app.add_handler(CallbackQueryHandler(show_calendar, pattern=r"^cdate_calendar$"))
     app.add_handler(CallbackQueryHandler(handle_day_selection, pattern=r"^cdate_day:"))
     app.add_handler(CallbackQueryHandler(set_am, pattern=r"^cdate_am$"))
@@ -1901,20 +1711,11 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(open_current_date, pattern=r"^cdate_open$"))
     app.add_handler(CallbackQueryHandler(navigate_month, pattern=r"^cdate_prev_month$|^cdate_next_month$"))
     app.add_handler(CallbackQueryHandler(back_to_main, pattern=r"^cdate_back$"))
+    
     app.add_handler(CallbackQueryHandler(datedelete_toggle, pattern=r"^datedelete_toggle:"))
     app.add_handler(CallbackQueryHandler(datedelete_confirm, pattern=r"^datedelete_confirm$"))
-    app.add_handler(CallbackQueryHandler(close_hot_numbers, pattern="^close_hot_numbers$"))
-    app.add_handler(CallbackQueryHandler(set_user_break, pattern="^set_user_break$"))
-    app.add_handler(CallbackQueryHandler(place_bet_behalf, pattern="^place_bet_behalf$"))
-    app.add_handler(CallbackQueryHandler(handle_set_break, pattern=r"^setbreak:"))
-    app.add_handler(CallbackQueryHandler(handle_behalf_bet, pattern=r"^behalfbet:"))
-    app.add_handler(CallbackQueryHandler(hotnum_select, pattern=r"^hotnum_select:"))
-    app.add_handler(CallbackQueryHandler(hotnum_select_all, pattern="^hotnum_select_all$"))
-    app.add_handler(CallbackQueryHandler(hotnum_unselect_all, pattern="^hotnum_unselect_all$"))
-    app.add_handler(CallbackQueryHandler(hotnum_delete, pattern="^hotnum_delete$"))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_close_numbers))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_break_amount))
+    # Message handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
