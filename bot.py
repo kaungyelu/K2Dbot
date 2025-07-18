@@ -5,9 +5,10 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
 )
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import pytz
 import re
+import calendar
 
 # Environment variable
 TOKEN = os.getenv("BOT_TOKEN")
@@ -33,6 +34,10 @@ overbuy_list = {}  # {date_key: {username: {num: amount}}}
 message_store = {}  # {(user_id, message_id): (sent_message_id, bets, total_amount, date_key)}
 overbuy_selections = {}  # {date_key: {username: {num: amount}}}
 current_working_date = None  # For admin date selection
+
+# Com and Za data
+com_data = {}
+za_data = {}
 
 def reverse_number(n):
     s = str(n).zfill(2)
@@ -1218,7 +1223,7 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
         else:
-            await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
+            await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်း�မရှိပါ")
             
     except Exception as e:
         logger.error(f"Error in posthis_callback: {str(e)}")
@@ -1364,48 +1369,143 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Error occurred")
 
 async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, current_working_date
+    global admin_id
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
-            
-        # Get all available dates
-        available_dates = get_available_dates()
         
-        if not available_dates:
-            await update.message.reply_text("ℹ️ မည်သည့်စာရင်းမှ မရှိသေးပါ")
-            return
-            
-        buttons = []
-        for date in available_dates:
-            pnum = pnumber_per_date.get(date, None)
-            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
-            is_current = (date == current_working_date)
-            button_text = f"{date}{pnum_str}{' ✅' if is_current else ''}"
-            buttons.append([InlineKeyboardButton(button_text, callback_data=f"cdate_set:{date}")])
-        
-        buttons.append([InlineKeyboardButton("Open Current", callback_data="cdate_open")])
-        reply_markup = InlineKeyboardMarkup(buttons)
-        
-        await update.message.reply_text("👉 ပြောင်းလိုသောနေ့ရက်ကိုရွေးချယ်ပါ:", reply_markup=reply_markup)
-        
+        # Show calendar with AM/PM selection
+        keyboard = [
+            [InlineKeyboardButton("🗓 လက်ရှိလအတွက် ပြက္ခဒိန်", callback_data="cdate_calendar")],
+            [InlineKeyboardButton("⏰ AM ရွေးရန်", callback_data="cdate_am")],
+            [InlineKeyboardButton("🌙 PM ရွေးရန်", callback_data="cdate_pm")],
+            [InlineKeyboardButton("📆 ယနေ့ဖွင့်ရန်", callback_data="cdate_open")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "👉 လက်ရှိ အလုပ်လုပ်ရမည့်နေ့ရက်ကို ရွေးချယ်ပါ\n"
+            "• ပြက္ခဒိန်ဖြင့်ရွေးရန်: 🗓 ခလုတ်ကိုနှိပ်ပါ\n"
+            "• AM သို့ပြောင်းရန်: ⏰ ခလုတ်ကိုနှိပ်ပါ\n"
+            "• PM သို့ပြောင်းရန်: 🌙 ခလုတ်ကိုနှိပ်ပါ\n"
+            "• ယနေ့သို့ပြန်ရန်: 📆 ခလုတ်ကိုနှိပ်ပါ",
+            reply_markup=reply_markup
+        )
     except Exception as e:
         logger.error(f"Error in change_working_date: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
-async def set_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        now = datetime.now(MYANMAR_TIMEZONE)
+        year, month = now.year, now.month
+        
+        # Create calendar header
+        cal_header = calendar.month_name[month] + " " + str(year)
+        days = ["တနင်္လာ", "အင်္ဂါ", "ဗုဒ္ဓဟူး", "ကြာသပတေး", "သောကြာ", "စနေ", "တနင်္ဂနွေ"]
+        
+        # Generate calendar days
+        cal = calendar.monthcalendar(year, month)
+        keyboard = []
+        keyboard.append([InlineKeyboardButton(cal_header, callback_data="ignore")])
+        keyboard.append([InlineKeyboardButton(day, callback_data="ignore") for day in days])
+        
+        for week in cal:
+            week_buttons = []
+            for day in week:
+                if day == 0:
+                    week_buttons.append(InlineKeyboardButton(" ", callback_data="ignore"))
+                else:
+                    date_str = f"{day:02d}/{month:02d}/{year}"
+                    week_buttons.append(InlineKeyboardButton(str(day), callback_data=f"cdate_day:{date_str}"))
+            keyboard.append(week_buttons)
+        
+        # Add navigation and back buttons
+        keyboard.append([
+            InlineKeyboardButton("⬅️ ယခင်", callback_data="cdate_prev_month"),
+            InlineKeyboardButton("➡️ နောက်", callback_data="cdate_next_month")
+        ])
+        keyboard.append([InlineKeyboardButton("🔙 နောက်သို့", callback_data="cdate_back")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text("🗓 နေ့ရက်ရွေးရန် ပြက္ခဒိန်", reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in show_calendar: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def handle_day_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        _, date_str = query.data.split(':')
+        context.user_data['selected_date'] = date_str
+        
+        # Ask for AM/PM selection
+        keyboard = [
+            [InlineKeyboardButton("⏰ AM", callback_data="cdate_set_am")],
+            [InlineKeyboardButton("🌙 PM", callback_data="cdate_set_pm")],
+            [InlineKeyboardButton("🔙 နောက်သို့", callback_data="cdate_back")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"👉 {date_str} အတွက် အချိန်ပိုင်းရွေးပါ",
+            reply_markup=reply_markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in handle_day_selection: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def set_am_pm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     try:
         global current_working_date
-        _, date_key = query.data.split(':')
-        current_working_date = date_key
-        await query.edit_message_text(f"✅ လက်ရှိ အလုပ်လုပ်ရမည့်နေ့ရက်ကို {date_key} အဖြစ်ပြောင်းလိုက်ပါပြီ")
+        time_segment = "AM" if "am" in query.data else "PM"
+        date_str = context.user_data.get('selected_date', '')
+        
+        if not date_str:
+            await query.edit_message_text("❌ Error: Date not selected")
+            return
+            
+        current_working_date = f"{date_str} {time_segment}"
+        await query.edit_message_text(f"✅ လက်ရှိ အလုပ်လုပ်ရမည့်နေ့ရက်ကို {current_working_date} အဖြစ်ပြောင်းလိုက်ပါပြီ")
+        
     except Exception as e:
-        logger.error(f"Error in set_working_date: {str(e)}")
+        logger.error(f"Error in set_am_pm: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
+
+async def set_am(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global current_working_date
+    try:
+        if current_working_date:
+            date_part = current_working_date.split()[0]
+            current_working_date = f"{date_part} AM"
+            await update.callback_query.edit_message_text(f"✅ လက်ရှိ အလုပ်လုပ်ရမည့်နေ့ရက်ကို {current_working_date} အဖြစ်ပြောင်းလိုက်ပါပြီ")
+        else:
+            await update.callback_query.edit_message_text("❌ လက်ရှိနေ့ရက် သတ်မှတ်ထားခြင်းမရှိပါ")
+    except Exception as e:
+        logger.error(f"Error in set_am: {str(e)}")
+        await update.callback_query.edit_message_text("❌ Error occurred")
+
+async def set_pm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global current_working_date
+    try:
+        if current_working_date:
+            date_part = current_working_date.split()[0]
+            current_working_date = f"{date_part} PM"
+            await update.callback_query.edit_message_text(f"✅ လက်ရှိ အလုပ်လုပ်ရမည့်နေ့ရက်ကို {current_working_date} အဖြစ်ပြောင်းလိုက်ပါပြီ")
+        else:
+            await update.callback_query.edit_message_text("❌ လက်ရှိနေ့ရက် သတ်မှတ်ထားခြင်းမရှိပါ")
+    except Exception as e:
+        logger.error(f"Error in set_pm: {str(e)}")
+        await update.callback_query.edit_message_text("❌ Error occurred")
 
 async def open_current_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1418,6 +1518,16 @@ async def open_current_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in open_current_date: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
+
+async def navigate_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Placeholder for month navigation
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text("ℹ️ လများလှန်ကြည့်ခြင်းအား နောက်ထပ်ဗားရှင်းတွင် ထည့်သွင်းပါမည်")
+
+async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await change_working_date(update, context)
 
 async def delete_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
@@ -1576,8 +1686,8 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("reset", reset_data))
     app.add_handler(CommandHandler("posthis", posthis))
     app.add_handler(CommandHandler("dateall", dateall))
-    app.add_handler(CommandHandler("Cdate", change_working_date))  # New command
-    app.add_handler(CommandHandler("Ddate", delete_date))         # New command
+    app.add_handler(CommandHandler("Cdate", change_working_date))  # Updated command
+    app.add_handler(CommandHandler("Ddate", delete_date))
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(comza_input, pattern=r"^comza:"))
@@ -1591,8 +1701,17 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(posthis_callback, pattern=r"^posthis:"))
     app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
     app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
-    app.add_handler(CallbackQueryHandler(set_working_date, pattern=r"^cdate_set:"))
+    
+    # New calendar handlers
+    app.add_handler(CallbackQueryHandler(show_calendar, pattern=r"^cdate_calendar$"))
+    app.add_handler(CallbackQueryHandler(handle_day_selection, pattern=r"^cdate_day:"))
+    app.add_handler(CallbackQueryHandler(set_am, pattern=r"^cdate_am$"))
+    app.add_handler(CallbackQueryHandler(set_pm, pattern=r"^cdate_pm$"))
+    app.add_handler(CallbackQueryHandler(set_am_pm, pattern=r"^cdate_set_am$|^cdate_set_pm$"))
     app.add_handler(CallbackQueryHandler(open_current_date, pattern=r"^cdate_open$"))
+    app.add_handler(CallbackQueryHandler(navigate_month, pattern=r"^cdate_prev_month$|^cdate_next_month$"))
+    app.add_handler(CallbackQueryHandler(back_to_main, pattern=r"^cdate_back$"))
+    
     app.add_handler(CallbackQueryHandler(datedelete_toggle, pattern=r"^datedelete_toggle:"))
     app.add_handler(CallbackQueryHandler(datedelete_confirm, pattern=r"^datedelete_confirm$"))
 
