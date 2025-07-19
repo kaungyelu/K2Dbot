@@ -144,29 +144,57 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         while i < len(entries):
             entry = entries[i]
             
-            # 1. New format: 12-56-78r1000 or 12/56/78r1000
-            if 'r' in entry and (entry.count('r') == 1) and (any(sep in entry for sep in ['-', '/'])):
-                parts = entry.rsplit('r', 1)
+            # Improved handling for formats like 12-56-78r1000
+            if 'r' in entry and '-' in entry:
+                parts = entry.split('r')
                 if len(parts) == 2 and parts[1].isdigit():
-                    amount_val = int(parts[1])
-                    numbers_part = parts[0]
-                    num_tokens = re.split(r'[-/]', numbers_part)
+                    base_amount = int(parts[1])
+                    reverse_amount = int(parts[1])
+                    
+                    # Split left part by '-' to get numbers
                     numbers = []
-                    for token in num_tokens:
-                        if token.isdigit():
-                            num = int(token)
+                    for num_str in parts[0].split('-'):
+                        if num_str.isdigit():
+                            num = int(num_str)
                             if 0 <= num <= 99:
                                 numbers.append(num)
+                    
                     if numbers:
                         for num in numbers:
-                            bets.append(f"{num:02d}-{amount_val}")
+                            bets.append(f"{num:02d}-{base_amount}")
                             rev = reverse_number(num)
-                            bets.append(f"{rev:02d}-{amount_val}")
-                            total_amount += 2 * amount_val
+                            bets.append(f"{rev:02d}-{reverse_amount}")
+                            total_amount += base_amount + reverse_amount
                         i += 1
                         continue
             
-            # 2. Improved handling for formats like 67/34/12/1000r500
+            # Improved handling for formats like 12-56-78-1000r500
+            if 'r' in entry and '-' in entry:
+                parts = entry.split('r')
+                if len(parts) == 2 and parts[1].isdigit():
+                    reverse_amount = int(parts[1])
+                    
+                    # Split left part by '-' to get numbers and base amount
+                    left_parts = parts[0].split('-')
+                    if len(left_parts) >= 2 and left_parts[-1].isdigit():
+                        base_amount = int(left_parts[-1])
+                        numbers = []
+                        for num_str in left_parts[:-1]:
+                            if num_str.isdigit():
+                                num = int(num_str)
+                                if 0 <= num <= 99:
+                                    numbers.append(num)
+                        
+                        if numbers:
+                            for num in numbers:
+                                bets.append(f"{num:02d}-{base_amount}")
+                                rev = reverse_number(num)
+                                bets.append(f"{rev:02d}-{reverse_amount}")
+                                total_amount += base_amount + reverse_amount
+                            i += 1
+                            continue
+            
+            # Improved handling for formats like 67/34/12/1000r500
             if '/' in entry and 'r' in entry:
                 parts = entry.split('/')
                 # Find the part with 'r'
@@ -208,7 +236,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             i += 1
                             continue
             
-            # 3. Improved handling for formats like 12-34-56-100r200
+            # Improved handling for formats like 12-34-56-100r200
             if '-' in entry and 'r' in entry:
                 parts = entry.split('-')
                 # Find the part with 'r'
@@ -250,7 +278,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             i += 1
                             continue
             
-            # 4. Original parsing logic with improvements
+            # Original parsing logic with improvements
             if i + 2 < len(entries):
                 if (entries[i].isdigit() and entries[i+1].isdigit() and entries[i+2].isdigit()):
                     num1 = int(entries[i])
@@ -1345,20 +1373,10 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_totals = {}
         overall_total = 0
         overall_power_total = 0
-        overbuy_reports = {}
-        
-        # Collect overbuy data
-        for date_key in selected_dates:
-            if date_key in overbuy_list:
-                for user, overbuys in overbuy_list[date_key].items():
-                    if user not in overbuy_reports:
-                        overbuy_reports[user] = {}
-                    overbuy_reports[user][date_key] = overbuys
         
         for user in user_data:
-            user_total = 0
-            user_power_total = 0
-            user_overbuy_total = 0
+            user_total_amt = 0
+            user_pamt = 0
             
             for date in selected_dates:
                 if user in user_data and date in user_data[user]:
@@ -1366,34 +1384,39 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pnum = pnumber_per_date.get(date, None)
                     
                     for num, amt in user_data[user][date]:
-                        user_total += amt
+                        user_total_amt += amt
                         if pnum is not None and num == pnum:
-                            user_power_total += amt
+                            user_pamt += amt
             
-            if user_total > 0:
+            if user_total_amt > 0:
                 user_totals[user] = {
-                    'total': user_total,
-                    'power_total': user_power_total
+                    'total': user_total_amt,
+                    'power_total': user_pamt
                 }
-                overall_total += user_total
-                overall_power_total += user_power_total
+                overall_total += user_total_amt
+                overall_power_total += user_pamt
         
         # Build report
         msg = ["📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
         msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
         
+        # Add overbuy data
+        for date in selected_dates:
+            if date in overbuy_list and user in overbuy_list[date]:
+                if user not in user_totals:
+                    user_totals[user] = {'total': 0, 'power_total': 0}
+                
+                overbuy_data = overbuy_list[date][user]
+                if overbuy_data:
+                    msg.append(f"👤 {user} - {date} Overbuy:")
+                    for num, amt in overbuy_data.items():
+                        msg.append(f"  - {num:02d} ➤ {amt}")
+                    msg.append("")
+        
         for user, data in user_totals.items():
             msg.append(f"👤 {user}:")
             msg.append(f"  💵 စုစုပေါင်း: {data['total']}")
             msg.append(f"  🔴 Power Number စုစုပေါင်း: {data['power_total']}")
-            
-            # Add overbuy information if exists
-            if user in overbuy_reports:
-                for date, overbuys in overbuy_reports[user].items():
-                    if date in selected_dates:
-                        overbuy_str = ", ".join([f"{num:02d}:{amt}" for num, amt in overbuys.items()])
-                        msg.append(f"  📌 Overbuy ({date}): {overbuy_str}")
-            
             msg.append("")
         
         if user_totals:
