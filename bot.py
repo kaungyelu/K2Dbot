@@ -28,7 +28,7 @@ admin_id = None
 user_data = {}  # {username: {date_key: [(num, amt)]}}
 ledger = {}     # {date_key: {number: total_amount}}
 break_limits = {}  # {date_key: limit}
-pnumber_per_date = {}  # {date_key: power_number}}
+pnumber_per_date = {}  # {date_key: power_number}
 date_control = {}  # {date_key: True/False}
 overbuy_list = {}  # {date_key: {username: {num: amount}}}
 message_store = {}  # {(user_id, message_id): (sent_message_id, bets, total_amount, date_key)}
@@ -223,124 +223,63 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         continue
             i += 1
 
-        # Reverse format handler - IMPROVED
+        # Reverse format handler
         reverse_pattern = re.compile(r'(\d+)[rR](\d+)')
-        i = 0
-        while i < len(entries) and not found_special:
-            entry = entries[i]
-            reverse_match = reverse_pattern.search(entry)
-            
+        if not found_special:
+            # Check for reverse format in the entire message
+            reverse_match = re.search(reverse_pattern, text)
             if reverse_match:
-                # Handle reverse format in single entry
-                num_part = reverse_match.group(1)
+                base_amt = int(reverse_match.group(1))
                 reverse_amt = int(reverse_match.group(2))
-                base_amt = reverse_amt
+                # Remove the reverse part from the text for number extraction
+                text_without_reverse = text.replace(reverse_match.group(0), '', 1)
+                # Extract all numbers (0-99) from the modified text
+                all_digits = re.findall(r'\d+', text_without_reverse)
+                numbers = []
+                for digit in all_digits:
+                    num_val = int(digit)
+                    if 0 <= num_val <= 99:
+                        numbers.append(num_val)
                 
-                # Check for base amount before 'r'
-                base_parts = entry.split('r')[0].split('R')[0]
-                if any(sep in base_parts for sep in ['-', '/', '.', '+', '=', '*', ',']):
-                    parts = re.split(r'[-/.,+=* ]', base_parts)
-                    numbers = []
-                    for part in parts:
-                        if part.isdigit():
-                            num = int(part)
-                            if 0 <= num <= 99:
-                                numbers.append(num)
-                    
-                    if numbers:
-                        for num in numbers:
-                            bets.append(f"{num:02d}-{base_amt}")
-                            rev = reverse_number(num)
-                            bets.append(f"{rev:02d}-{reverse_amt}")
-                            total_amount += base_amt + reverse_amt
-                        i += 1
-                        continue
-                elif base_parts.isdigit():
-                    num = int(base_parts)
-                    if 0 <= num <= 99:
+                if numbers:
+                    for num in numbers:
                         bets.append(f"{num:02d}-{base_amt}")
                         rev = reverse_number(num)
                         bets.append(f"{rev:02d}-{reverse_amt}")
                         total_amount += base_amt + reverse_amt
-                        i += 1
-                        continue
-            
-            # Multi-part reverse format - IMPROVED
-            if i+1 < len(entries) and ('r' in entries[i+1] or 'R' in entries[i+1]):
-                num_str = entry
-                r_part = entries[i+1]
-                r_parts = re.split(r'[rR]', r_part)
-                if len(r_parts) == 2 and r_parts[0].isdigit() and r_parts[1].isdigit():
-                    base_amt = int(r_parts[0])
-                    reverse_amt = int(r_parts[1])
-                    
-                    # Handle multiple numbers
-                    numbers = []
-                    for part in re.split(r'[-/.,+=* ]', num_str):
-                        if part.isdigit():
-                            num = int(part)
-                            if 0 <= num <= 99:
-                                numbers.append(num)
-                    
-                    if numbers:
-                        for num in numbers:
-                            bets.append(f"{num:02d}-{base_amt}")
-                            rev = reverse_number(num)
-                            bets.append(f"{rev:02d}-{reverse_amt}")
-                            total_amount += base_amt + reverse_amt
-                        i += 2
-                        continue
-            
-            i += 1
+                    found_special = True
 
-        # NEW: Advanced number-amount parsing
+        # General number-amount parsing
         if not bets and not found_special:
-            # Extract all number-amount pairs
-            pattern = r'(\d{1,2})[\s\-/,\.\+\=\*]*(\d{3,})'
-            matches = re.findall(pattern, text)
+            # Extract all digit sequences
+            all_digits = re.findall(r'\d+', text)
+            numbers = []
+            amounts = []
+            current_group = []
             
-            # Process each pair
-            processed_numbers = set()
-            for num_str, amt_str in matches:
-                try:
-                    num = int(num_str)
-                    amt = int(amt_str)
-                    
-                    if 0 <= num <= 99 and amt >= 100:
-                        # Skip if already processed in reverse
-                        if num not in processed_numbers:
-                            bets.append(f"{num:02d}-{amt}")
-                            total_amount += amt
-                            processed_numbers.add(num)
-                except ValueError:
-                    continue
-                    
-            # Handle single numbers with global amount
-            if not bets:
-                all_digits = re.findall(r'\d+', text)
-                numbers = []
-                amount = None
-                
-                # Find the first valid amount
-                for digit in all_digits:
-                    num_val = int(digit)
-                    if num_val >= 100:
-                        amount = num_val
-                        break
-                
-                # If amount found, collect all valid numbers
-                if amount is not None:
-                    for digit in all_digits:
-                        num_val = int(digit)
-                        if 0 <= num_val <= 99 and num_val not in processed_numbers:
-                            numbers.append(num_val)
-                
-                    # Remove duplicates and sort
-                    numbers = sorted(set(numbers))
-                    
-                    for num in numbers:
-                        bets.append(f"{num:02d}-{amount}")
-                        total_amount += amount
+            # Parse tokens with different separators
+            tokens = re.split(r'[,\s\-+.,=*/\r]', text)
+            tokens = [t.strip() for t in tokens if t.strip()]
+            
+            # Process tokens to handle number-amount pairs
+            for token in tokens:
+                if token.isdigit():
+                    num_val = int(token)
+                    if 0 <= num_val <= 99:
+                        current_group.append(num_val)
+                    elif num_val >= 100:
+                        if current_group:
+                            for num in current_group:
+                                bets.append(f"{num:02d}-{num_val}")
+                                total_amount += num_val
+                            current_group = []
+            
+            # Handle leftover numbers
+            if current_group and amounts:
+                amt = amounts[-1]
+                for num in current_group:
+                    bets.append(f"{num:02d}-{amt}")
+                    total_amount += amt
         
         # If no bets found by any method
         if not bets:
@@ -362,7 +301,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             amt = int(amt)
             
             # Update ledger
-            ledger[key][num] = ledger[key].get(num, 0) + amt
+            if num not in ledger[key]:
+                ledger[key][num] = 0
+            ledger[key][num] += amt
             
             # Update user data
             user_data[user.username][key].append((num, amt))
@@ -377,7 +318,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in handle_message: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
-
 
 async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1076,7 +1016,6 @@ async def posthis(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "ဘယ် user ရဲ့စာရင်းကိုကြည့်မလဲ?",
                 reply_markup=InlineKeyboardMarkup(keyboard)
-            )
             return
         
         username = user.username if not is_admin else context.args[0] if context.args else None
@@ -1270,23 +1209,16 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         overall_total = 0
         overall_power_total = 0
         
-        # Collect all users from all selected dates
-        all_users = set()
-        for date_key in selected_dates:
-            for user in user_data:
-                if date_key in user_data[user]:
-                    all_users.add(user)
-        
-        # Calculate totals per user
-        for user in all_users:
+        for user in user_data:
             user_total_amt = 0
             user_pamt = 0
             
-            for date_key in selected_dates:
-                if date_key in user_data.get(user, {}):
-                    pnum = pnumber_per_date.get(date_key, None)
+            for date in selected_dates:
+                if user in user_data and date in user_data[user]:
+                    # Get pnumber for this date if exists
+                    pnum = pnumber_per_date.get(date, None)
                     
-                    for num, amt in user_data[user][date_key]:
+                    for num, amt in user_data[user][date]:
                         user_total_amt += amt
                         if pnum is not None and num == pnum:
                             user_pamt += amt
@@ -1300,40 +1232,19 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 overall_power_total += user_pamt
         
         # Build report
-        msg = [f"📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
+        msg = ["📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
         msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
         
-        # Add user reports
         for user, data in user_totals.items():
-            com = com_data.get(user, 0)
-            za = za_data.get(user, 0)
-            commission_amt = (data['total'] * com) // 100
-            after_com = data['total'] - commission_amt
-            win_amt = data['power_total'] * za
-            net = after_com - win_amt
-            status = "ဒိုင်ကပေးရမည်" if net < 0 else "ဒိုင်ကရမည်"
-            
-            user_report = (
-                f"👤 {user}\n"
-                f"💵 စုစုပေါင်း: {data['total']}\n"
-                f"📊 Com({com}%) ➤ {commission_amt}\n"
-                f"💰 Com ပြီး: {after_com}\n"
-                f"🔢 Power Number စုစုပေါင်း: {data['power_total']}\n"
-                f"🎯 Za({za}) ➤ {win_amt}\n"
-                f"📈 ရလဒ်: {abs(net)} ({status})\n"
-                "-----------------"
-            )
-            msg.append(user_report)
+            msg.append(f"👤 {user}:")
+            msg.append(f"  💵 စုစုပေါင်း: {data['total']}")
+            msg.append(f"  🔴 Power Number စုစုပေါင်း: {data['power_total']}")
+            msg.append("")
         
         if user_totals:
-            total_net = sum(
-                (user_data['total'] * (100 - com_data.get(user, 0)) // 100 - 
-                user_data['power_total'] * za_data.get(user, 0)
-                for user, user_data in user_totals.items()
-            )
-            
-            status = "ဒိုင်အရှုံး" if total_net < 0 else "ဒိုင်အမြတ်"
-            msg.append(f"\n📊 စုစုပေါင်းရလဒ်: {abs(total_net)} ({status})")
+            msg.append(f"📊 စုစုပေါင်း:")
+            msg.append(f"  💵 လောင်းကြေးစုစုပေါင်း: {overall_total}")
+            msg.append(f"  🔴 Power Number စုစုပေါင်း: {overall_power_total}")
             await query.edit_message_text("\n".join(msg))
         else:
             await query.edit_message_text("ℹ️ ရွေးချယ်ထားသည့် နေ့ရက်များတွင် ဒေတာမရှိပါ")
