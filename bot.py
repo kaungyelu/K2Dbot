@@ -34,6 +34,9 @@ overbuy_list = {}  # {date_key: {username: {num: amount}}}
 message_store = {}  # {(user_id, message_id): (sent_message_id, bets, total_amount, date_key)}
 overbuy_selections = {}  # {date_key: {username: {num: amount}}}
 current_working_date = None  # For admin date selection
+closed_numbers = {}  # {date_key: set(closed_numbers)}
+user_break_limits = {}  # {date_key: {username: limit}}
+placing_bet_for = None  # For placing bets on behalf
 
 # Com and Za data
 com_data = {}
@@ -62,19 +65,94 @@ def get_available_dates():
     dates.update(break_limits.keys())
     # Get dates from pnumber
     dates.update(pnumber_per_date.keys())
+    # Get dates from closed_numbers
+    dates.update(closed_numbers.keys())
     return sorted(dates, reverse=True)
+
+def parse_numbers_from_text(text):
+    numbers = set()
+    # Fixed special cases
+    fixed_special_cases = {
+        "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
+        "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
+        "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
+        "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
+    }
+    
+    # Dynamic types
+    dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
+    
+    # Common patterns
+    tokens = text.split()
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        found = False
+        
+        # Fixed special cases
+        if token in fixed_special_cases:
+            numbers.update(fixed_special_cases[token])
+            i += 1
+            continue
+            
+        # Dynamic types
+        for dtype in dynamic_types:
+            if token.endswith(dtype):
+                prefix = token[:-len(dtype)]
+                if prefix.isdigit():
+                    digit_val = int(prefix)
+                    if 0 <= digit_val <= 9:
+                        if dtype == "ထိပ်":
+                            numbers.update([digit_val * 10 + j for j in range(10)])
+                        elif dtype == "ပိတ်":
+                            numbers.update([j * 10 + digit_val for j in range(10)])
+                        elif dtype == "ဘရိတ်":
+                            numbers.update([n for n in range(100) if (n//10 + n%10) % 10 == digit_val])
+                        elif dtype == "အပါ":
+                            tens = [digit_val * 10 + j for j in range(10)]
+                            units = [j * 10 + digit_val for j in range(10)]
+                            numbers.update(tens + units)
+                        found = True
+                        i += 1
+                        break
+        if found:
+            continue
+            
+        # Multiple numbers separated by '/'
+        if '/' in token:
+            parts = token.split('/')
+            for part in parts:
+                if part.isdigit():
+                    num = int(part)
+                    if 0 <= num <= 99:
+                        numbers.add(num)
+            i += 1
+            continue
+            
+        # Single number
+        if token.isdigit():
+            num = int(token)
+            if 0 <= num <= 99:
+                numbers.add(num)
+                i += 1
+                continue
+                
+        i += 1
+        
+    return numbers
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     if update.effective_user.id == admin_id:
         keyboard = [
-            ["/dateopen", "/dateclose"],
-            ["/ledger", "/break"],
-            ["/overbuy", "/pnumber"],
+            ["/dateopen", "/dateclose", "/hotnumbers"],
+            ["/ledger", "/break", "/userbreak"],
+            ["/overbuy", "/pnumber", "/placebet"],
             ["/comandza", "/total"],
             ["/tsent", "/alldata"],
             ["/reset", "/posthis", "/dateall"],
-            ["/Cdate", "/Ddate"]  # New date management commands
+            ["/Cdate", "/Ddate"]
         ]
     else:
         keyboard = [
@@ -119,9 +197,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         text = update.message.text
         
-        if not user or not user.username:
-            await update.message.reply_text("❌ ကျေးဇူးပြု၍ Telegram username သတ်မှတ်ပါ")
-            return
+        # Check if admin is placing bet for another user
+        global placing_bet_for
+        if placing_bet_for:
+            username = placing_bet_for
+            placing_bet_for = None
+        else:
+            if not user or not user.username:
+                await update.message.reply_text("❌ ကျေးဇူးပြု၍ Telegram username သတ်မှတ်ပါ")
+                return
+            username = user.username
 
         key = get_current_date_key()
         if not date_control.get(key, False):
@@ -139,6 +224,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         entries = text.split()
         bets = []
         total_amount = 0
+        errors = []
+        warnings = []
 
         i = 0
         while i < len(entries):
@@ -361,21 +448,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if prefix.isdigit():
                         digit_val = int(prefix)
                         if 0 <= digit_val <= 9:
-                            numbers = []
+                            numbers_list = []
                             if dtype == "ထိပ်":
-                                numbers = [digit_val * 10 + j for j in range(10)]
+                                numbers_list = [digit_val * 10 + j for j in range(10)]
                             elif dtype == "ပိတ်":
-                                numbers = [j * 10 + digit_val for j in range(10)]
+                                numbers_list = [j * 10 + digit_val for j in range(10)]
                             elif dtype == "ဘရိတ်":
-                                numbers = [n for n in range(100) if (n//10 + n%10) % 10 == digit_val]
+                                numbers_list = [n for n in range(100) if (n//10 + n%10) % 10 == digit_val]
                             elif dtype == "အပါ":
                                 tens = [digit_val * 10 + j for j in range(10)]
                                 units = [j * 10 + digit_val for j in range(10)]
-                                numbers = list(set(tens + units))
+                                numbers_list = list(set(tens + units))
                             
                             if i+1 < len(entries) and entries[i+1].isdigit():
                                 amt = int(entries[i+1])
-                                for num in numbers:
+                                for num in numbers_list:
                                     bets.append(f"{num:02d}-{amt}")
                                     total_amount += amt
                                 i += 2
@@ -400,34 +487,67 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             i += 1
 
-        if user.username not in user_data:
-            user_data[user.username] = {}
-        if key not in user_data[user.username]:
-            user_data[user.username][key] = []
+        if username not in user_data:
+            user_data[username] = {}
+        if key not in user_data[username]:
+            user_data[username][key] = []
 
         # Initialize ledger for this date if not exists
         if key not in ledger:
             ledger[key] = {}
 
+        # Process bets with validations
+        valid_bets = []
         for bet in bets:
-            num, amt = bet.split('-')
-            num = int(num)
-            amt = int(amt)
+            num_str, amt_str = bet.split('-')
+            num = int(num_str)
+            amt = int(amt_str)
             
+            # Check if number is closed
+            if key in closed_numbers and num in closed_numbers[key]:
+                errors.append(f"{num:02d} ကန့်သတ်ထားသည်")
+                continue
+                
+            # Check user break limit
+            user_limit = None
+            if key in user_break_limits and username in user_break_limits[key]:
+                user_limit = user_break_limits[key][username]
+                
+            if user_limit is not None:
+                user_current = sum(a for (n, a) in user_data[username].get(key, []) if n == num)
+                if user_current + amt > user_limit:
+                    allowed = user_limit - user_current
+                    if allowed > 0:
+                        amt = allowed
+                        warnings.append(f"{num:02d} ကို {amt_str} မှ {amt} သို့လျှော့ထားသည်")
+                    else:
+                        errors.append(f"{num:02d} ဘရိတ်ကန့်သတ်ချက်ကျော်လွန်နေပါသည်")
+                        continue
+            
+            valid_bets.append((num, amt))
             # Update ledger for this date
             ledger[key][num] = ledger[key].get(num, 0) + amt
             
             # Update user data
-            user_data[user.username][key].append((num, amt))
+            user_data[username][key].append((num, amt))
 
-        if bets:
-            response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
+        if valid_bets:
+            response = "\n".join([f"{num:02d}-{amt}" for num, amt in valid_bets]) + f"\nစုစုပေါင်း {sum(amt for _, amt in valid_bets)} ကျပ်"
+            
+            if errors:
+                response += "\n\n⚠️ အမှားများ:\n" + "\n".join(errors)
+            if warnings:
+                response += "\n\nℹ️ သတိပေးချက်များ:\n" + "\n".join(warnings)
+                
             keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
-            message_store[(user.id, update.message.message_id)] = (sent_message.message_id, bets, total_amount, key)
+            message_store[(user.id, update.message.message_id)] = (sent_message.message_id, valid_bets, total_amount, key)
         else:
-            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ")
+            error_msg = "⚠️ လောင်းကြေးမထည့်သွင်းနိုင်ပါ"
+            if errors:
+                error_msg += "\n\nအမှားများ:\n" + "\n".join(errors)
+            await update.message.reply_text(error_msg)
             
     except Exception as e:
         logger.error(f"Error in handle_message: {str(e)}")
@@ -445,7 +565,7 @@ async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.from_user.id != admin_id:
             if (user_id, message_id) in message_store:
                 sent_message_id, bets, total_amount, _ = message_store[(user_id, message_id)]
-                response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
+                response = "\n".join([f"{num}-{amt}" for num, amt in bets]) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
                 keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user_id}:{message_id}:{date_key}")]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_text(
@@ -498,9 +618,7 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         for bet in bets:
-            num, amt = bet.split('-')
-            num = int(num)
-            amt = int(amt)
+            num, amt = bet
             
             if date_key in ledger and num in ledger[date_key]:
                 ledger[date_key][num] -= amt
@@ -540,7 +658,7 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if (user_id, message_id) in message_store:
             sent_message_id, bets, total_amount, _ = message_store[(user_id, message_id)]
-            response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
+            response = "\n".join([f"{num}-{amt}" for num, amt in bets]) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
             keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user_id}:{message_id}:{date_key}")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(response, reply_markup=reply_markup)
@@ -1094,7 +1212,7 @@ async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, current_working_date
+    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, current_working_date, closed_numbers, user_break_limits
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
@@ -1110,6 +1228,8 @@ async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         break_limits = {}
         pnumber_per_date = {}
         current_working_date = get_current_date_key()
+        closed_numbers = {}
+        user_break_limits = {}
         
         await update.message.reply_text("✅ ဒေတာများအားလုံးကို ပြန်လည်သုတ်သင်ပြီး လက်ရှိနေ့သို့ပြန်လည်သတ်မှတ်ပြီးပါပြီ")
     except Exception as e:
@@ -1223,7 +1343,7 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
         else:
-            await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်း�မရှိပါ")
+            await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
             
     except Exception as e:
         logger.error(f"Error in posthis_callback: {str(e)}")
@@ -1357,7 +1477,7 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg.append("")
         
         if user_totals:
-            msg.append(f"📊 စုစုပေါင်း:")
+            msg.append(f"📊 စုစုပေါင်းရလဒ်:")
             msg.append(f"  💵 လောင်းကြေးစုစုပေါင်း: {overall_total}")
             msg.append(f"  🔴 Power Number စုစုပေါင်း: {overall_power_total}")
             await query.edit_message_text("\n".join(msg))
@@ -1652,6 +1772,14 @@ async def datedelete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Remove from overbuy_selections
             if date_key in overbuy_selections:
                 del overbuy_selections[date_key]
+                
+            # Remove from closed_numbers
+            if date_key in closed_numbers:
+                del closed_numbers[date_key]
+                
+            # Remove from user_break_limits
+            if date_key in user_break_limits:
+                del user_break_limits[date_key]
         
         # Clear current working date if it was deleted
         global current_working_date
@@ -1662,6 +1790,344 @@ async def datedelete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
     except Exception as e:
         logger.error(f"Error in datedelete_confirm: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+# New features implementation
+async def hotnumbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id, current_working_date
+    try:
+        if update.effective_user.id != admin_id:
+            await update.message.reply_text("❌ Admin only command")
+            return
+            
+        date_key = current_working_date if current_working_date else get_current_date_key()
+        
+        if date_key not in closed_numbers:
+            closed_numbers[date_key] = set()
+            
+        # Initialize selections
+        context.user_data['hotnumbers_selections'] = {num: False for num in closed_numbers[date_key]}
+        
+        # Build message
+        if closed_numbers[date_key]:
+            numbers_list = ", ".join(f"{n:02d}" for n in sorted(closed_numbers[date_key]))
+            msg = f"🔒 {date_key} အတွက် ပိတ်ထားသောဂဏန်းများ:\n{numbers_list}"
+        else:
+            msg = f"ℹ️ {date_key} အတွက် ပိတ်ထားသောဂဏန်းများ မရှိပါ"
+            
+        buttons = []
+        for num in sorted(closed_numbers[date_key]):
+            is_selected = context.user_data['hotnumbers_selections'].get(num, False)
+            buttons.append([InlineKeyboardButton(f"{num:02d} {'✅' if is_selected else '⬜'}", 
+                      callback_data=f"hotnumbers_toggle:{num}")])
+        
+        buttons.append([
+            InlineKeyboardButton("Select All", callback_data="hotnumbers_select_all"),
+            InlineKeyboardButton("Unselect All", callback_data="hotnumbers_unselect_all")
+        ])
+        buttons.append([InlineKeyboardButton("🗑 Delete Selected", callback_data="hotnumbers_delete")])
+        buttons.append([InlineKeyboardButton("➕ Add Numbers", callback_data="hotnumbers_add")])
+        
+        reply_markup = InlineKeyboardMarkup(buttons)
+        await update.message.reply_text(msg, reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in hotnumbers: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def hotnumbers_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        _, num_str = query.data.split(':')
+        num = int(num_str)
+        date_key = current_working_date if current_working_date else get_current_date_key()
+        
+        if 'hotnumbers_selections' not in context.user_data:
+            context.user_data['hotnumbers_selections'] = {}
+            
+        current_state = context.user_data['hotnumbers_selections'].get(num, False)
+        context.user_data['hotnumbers_selections'][num] = not current_state
+        
+        # Rebuild the message
+        if closed_numbers.get(date_key):
+            numbers_list = ", ".join(f"{n:02d}" for n in sorted(closed_numbers[date_key]))
+            msg = f"🔒 {date_key} အတွက် ပိတ်ထားသောဂဏန်းများ:\n{numbers_list}"
+        else:
+            msg = f"ℹ️ {date_key} အတွက် ပိတ်ထားသောဂဏန်းများ မရှိပါ"
+            
+        buttons = []
+        for n in sorted(closed_numbers.get(date_key, [])):
+            is_selected = context.user_data['hotnumbers_selections'].get(n, False)
+            buttons.append([InlineKeyboardButton(f"{n:02d} {'✅' if is_selected else '⬜'}", 
+                      callback_data=f"hotnumbers_toggle:{n}")])
+        
+        buttons.append([
+            InlineKeyboardButton("Select All", callback_data="hotnumbers_select_all"),
+            InlineKeyboardButton("Unselect All", callback_data="hotnumbers_unselect_all")
+        ])
+        buttons.append([InlineKeyboardButton("🗑 Delete Selected", callback_data="hotnumbers_delete")])
+        buttons.append([InlineKeyboardButton("➕ Add Numbers", callback_data="hotnumbers_add")])
+        
+        reply_markup = InlineKeyboardMarkup(buttons)
+        await query.edit_message_text(msg, reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in hotnumbers_toggle: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def hotnumbers_select_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        date_key = current_working_date if current_working_date else get_current_date_key()
+        
+        if 'hotnumbers_selections' not in context.user_data:
+            context.user_data['hotnumbers_selections'] = {}
+            
+        for num in closed_numbers.get(date_key, []):
+            context.user_data['hotnumbers_selections'][num] = True
+            
+        # Rebuild the message
+        if closed_numbers.get(date_key):
+            numbers_list = ", ".join(f"{n:02d}" for n in sorted(closed_numbers[date_key]))
+            msg = f"🔒 {date_key} အတွက် ပိတ်ထားသောဂဏန်းများ:\n{numbers_list}"
+        else:
+            msg = f"ℹ️ {date_key} အတွက် ပိတ်ထားသောဂဏန်းများ မရှိပါ"
+            
+        buttons = []
+        for n in sorted(closed_numbers.get(date_key, [])):
+            is_selected = context.user_data['hotnumbers_selections'].get(n, True)
+            buttons.append([InlineKeyboardButton(f"{n:02d} {'✅' if is_selected else '⬜'}", 
+                      callback_data=f"hotnumbers_toggle:{n}")])
+        
+        buttons.append([
+            InlineKeyboardButton("Select All", callback_data="hotnumbers_select_all"),
+            InlineKeyboardButton("Unselect All", callback_data="hotnumbers_unselect_all")
+        ])
+        buttons.append([InlineKeyboardButton("🗑 Delete Selected", callback_data="hotnumbers_delete")])
+        buttons.append([InlineKeyboardButton("➕ Add Numbers", callback_data="hotnumbers_add")])
+        
+        reply_markup = InlineKeyboardMarkup(buttons)
+        await query.edit_message_text(msg, reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in hotnumbers_select_all: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def hotnumbers_unselect_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        date_key = current_working_date if current_working_date else get_current_date_key()
+        
+        if 'hotnumbers_selections' not in context.user_data:
+            context.user_data['hotnumbers_selections'] = {}
+            
+        for num in closed_numbers.get(date_key, []):
+            context.user_data['hotnumbers_selections'][num] = False
+            
+        # Rebuild the message
+        if closed_numbers.get(date_key):
+            numbers_list = ", ".join(f"{n:02d}" for n in sorted(closed_numbers[date_key]))
+            msg = f"🔒 {date_key} အတွက် ပိတ်ထားသောဂဏန်းများ:\n{numbers_list}"
+        else:
+            msg = f"ℹ️ {date_key} အတွက် ပိတ်ထားသောဂဏန်းများ မရှိပါ"
+            
+        buttons = []
+        for n in sorted(closed_numbers.get(date_key, [])):
+            is_selected = context.user_data['hotnumbers_selections'].get(n, False)
+            buttons.append([InlineKeyboardButton(f"{n:02d} {'✅' if is_selected else '⬜'}", 
+                      callback_data=f"hotnumbers_toggle:{n}")])
+        
+        buttons.append([
+            InlineKeyboardButton("Select All", callback_data="hotnumbers_select_all"),
+            InlineKeyboardButton("Unselect All", callback_data="hotnumbers_unselect_all")
+        ])
+        buttons.append([InlineKeyboardButton("🗑 Delete Selected", callback_data="hotnumbers_delete")])
+        buttons.append([InlineKeyboardButton("➕ Add Numbers", callback_data="hotnumbers_add")])
+        
+        reply_markup = InlineKeyboardMarkup(buttons)
+        await query.edit_message_text(msg, reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Error in hotnumbers_unselect_all: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def hotnumbers_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        date_key = current_working_date if current_working_date else get_current_date_key()
+        
+        if 'hotnumbers_selections' not in context.user_data:
+            await query.edit_message_text("❌ Error: No selections found")
+            return
+            
+        # Get selected numbers
+        selected_numbers = [num for num, selected in context.user_data['hotnumbers_selections'].items() if selected]
+        
+        if not selected_numbers:
+            await query.edit_message_text("⚠️ ဘာဂဏန်းမှမရွေးထားပါ")
+            return
+            
+        # Remove selected numbers
+        for num in selected_numbers:
+            if num in closed_numbers.get(date_key, set()):
+                closed_numbers[date_key].remove(num)
+                
+        # Clear selections
+        del context.user_data['hotnumbers_selections']
+        
+        await query.edit_message_text(f"✅ အောက်ပါဂဏန်းများ ပိတ်ထားခြင်းမှ ဖယ်ရှားပြီးပါပြီ:\n{', '.join(f'{n:02d}' for n in selected_numbers)}")
+        
+    except Exception as e:
+        logger.error(f"Error in hotnumbers_delete: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def hotnumbers_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        context.user_data['awaiting_hotnumbers'] = True
+        await query.edit_message_text("ℹ️ ပိတ်လိုသောဂဏန်းများကိုထည့်ပါ (ဥပမာ: 14, 25/35/87, 1ထိပ်):")
+        
+    except Exception as e:
+        logger.error(f"Error in hotnumbers_add: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def hotnumbers_add_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if 'awaiting_hotnumbers' not in context.user_data:
+            await handle_message(update, context)
+            return
+            
+        text = update.message.text
+        date_key = current_working_date if current_working_date else get_current_date_key()
+        
+        # Parse numbers from text
+        numbers = parse_numbers_from_text(text)
+        
+        if not numbers:
+            await update.message.reply_text("⚠️ ဂဏန်းများမထည့်သွင်းနိုင်ပါ")
+            return
+            
+        # Add to closed numbers
+        if date_key not in closed_numbers:
+            closed_numbers[date_key] = set()
+            
+        closed_numbers[date_key].update(numbers)
+        
+        # Clear state
+        del context.user_data['awaiting_hotnumbers']
+        
+        await update.message.reply_text(f"✅ အောက်ပါဂဏန်းများ ပိတ်ထားခြင်းသတ်မှတ်ပြီးပါပြီ:\n{', '.join(f'{n:02d}' for n in sorted(numbers))}")
+        
+    except Exception as e:
+        logger.error(f"Error in hotnumbers_add_text: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def userbreak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id
+    try:
+        if update.effective_user.id != admin_id:
+            await update.message.reply_text("❌ Admin only command")
+            return
+            
+        if not user_data:
+            await update.message.reply_text("ℹ️ လက်ရှိ user မရှိပါ")
+            return
+            
+        users = list(user_data.keys())
+        keyboard = [[InlineKeyboardButton(u, callback_data=f"userbreak_user:{u}")] for u in users]
+        await update.message.reply_text("👉 User ကိုရွေးပါ", reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        logger.error(f"Error in userbreak: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def userbreak_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        _, username = query.data.split(':')
+        context.user_data['userbreak_user'] = username
+        context.user_data['awaiting_userbreak'] = True
+        await query.edit_message_text(f"ℹ️ {username} အတွက် ဘရိတ်ကန့်သတ်ချက် ပမာဏထည့်ပါ (ဥပမာ: 50000):")
+        
+    except Exception as e:
+        logger.error(f"Error in userbreak_user: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
+
+async def userbreak_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if 'awaiting_userbreak' not in context.user_data:
+            await handle_message(update, context)
+            return
+            
+        text = update.message.text
+        username = context.user_data['userbreak_user']
+        date_key = current_working_date if current_working_date else get_current_date_key()
+        
+        try:
+            limit = int(text)
+            if limit <= 0:
+                raise ValueError
+                
+            # Save user break limit
+            if date_key not in user_break_limits:
+                user_break_limits[date_key] = {}
+                
+            user_break_limits[date_key][username] = limit
+            
+            # Clear state
+            del context.user_data['awaiting_userbreak']
+            del context.user_data['userbreak_user']
+            
+            await update.message.reply_text(f"✅ {username} အတွက် ဘရိတ်ကန့်သတ်ချက် {limit} အဖြစ်သတ်မှတ်ပြီးပါပြီ")
+            
+        except ValueError:
+            await update.message.reply_text("⚠️ မှန်ကန်သောပမာဏထည့်ပါ")
+            
+    except Exception as e:
+        logger.error(f"Error in userbreak_text: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def placebet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id, placing_bet_for
+    try:
+        if update.effective_user.id != admin_id:
+            await update.message.reply_text("❌ Admin only command")
+            return
+            
+        if not user_data:
+            await update.message.reply_text("ℹ️ လက်ရှိ user မရှိပါ")
+            return
+            
+        users = list(user_data.keys())
+        keyboard = [[InlineKeyboardButton(u, callback_data=f"placebet_user:{u}")] for u in users]
+        await update.message.reply_text("👉 User ကိုရွေးပါ", reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        logger.error(f"Error in placebet: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def placebet_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        _, username = query.data.split(':')
+        global placing_bet_for
+        placing_bet_for = username
+        await query.edit_message_text(f"ℹ️ {username} အတွက် လောင်းကြေးထည့်ပါ (ပုံမှန်ပုံစံအတိုင်း):")
+        
+    except Exception as e:
+        logger.error(f"Error in placebet_user: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
 
 if __name__ == "__main__":
@@ -1686,8 +2152,11 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("reset", reset_data))
     app.add_handler(CommandHandler("posthis", posthis))
     app.add_handler(CommandHandler("dateall", dateall))
-    app.add_handler(CommandHandler("Cdate", change_working_date))  # Updated command
+    app.add_handler(CommandHandler("Cdate", change_working_date))
     app.add_handler(CommandHandler("Ddate", delete_date))
+    app.add_handler(CommandHandler("hotnumbers", hotnumbers))
+    app.add_handler(CommandHandler("userbreak", userbreak))
+    app.add_handler(CommandHandler("placebet", placebet))
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(comza_input, pattern=r"^comza:"))
@@ -1701,8 +2170,6 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(posthis_callback, pattern=r"^posthis:"))
     app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
     app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
-    
-    # New calendar handlers
     app.add_handler(CallbackQueryHandler(show_calendar, pattern=r"^cdate_calendar$"))
     app.add_handler(CallbackQueryHandler(handle_day_selection, pattern=r"^cdate_day:"))
     app.add_handler(CallbackQueryHandler(set_am, pattern=r"^cdate_am$"))
@@ -1711,12 +2178,20 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(open_current_date, pattern=r"^cdate_open$"))
     app.add_handler(CallbackQueryHandler(navigate_month, pattern=r"^cdate_prev_month$|^cdate_next_month$"))
     app.add_handler(CallbackQueryHandler(back_to_main, pattern=r"^cdate_back$"))
-    
     app.add_handler(CallbackQueryHandler(datedelete_toggle, pattern=r"^datedelete_toggle:"))
     app.add_handler(CallbackQueryHandler(datedelete_confirm, pattern=r"^datedelete_confirm$"))
+    app.add_handler(CallbackQueryHandler(hotnumbers_toggle, pattern=r"^hotnumbers_toggle:"))
+    app.add_handler(CallbackQueryHandler(hotnumbers_select_all, pattern=r"^hotnumbers_select_all$"))
+    app.add_handler(CallbackQueryHandler(hotnumbers_unselect_all, pattern=r"^hotnumbers_unselect_all$"))
+    app.add_handler(CallbackQueryHandler(hotnumbers_delete, pattern=r"^hotnumbers_delete$"))
+    app.add_handler(CallbackQueryHandler(hotnumbers_add, pattern=r"^hotnumbers_add$"))
+    app.add_handler(CallbackQueryHandler(userbreak_user, pattern=r"^userbreak_user:"))
+    app.add_handler(CallbackQueryHandler(placebet_user, pattern=r"^placebet_user:"))
 
     # Message handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hotnumbers_add_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, userbreak_text))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("🚀 Bot is starting...")
