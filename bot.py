@@ -132,279 +132,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ မက်ဆေ့ဂျ်မရှိပါ")
             return
 
-        if any(c in text for c in ['%', '&', '*', '$']):
-            await update.message.reply_text("⚠️ မှားနေပါတယ်\nအထူးသင်္ကေတများ (%&*$) မပါရပါ\nဥပမာ: 12-500")
-            return
-
-        entries = text.split()
+        # Special case handlers
+        fixed_special_cases = {
+            "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
+            "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
+            "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+            "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
+            "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
+        }
+        
+        dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
+        
         bets = []
         total_amount = 0
-
+        
+        # Check for special cases first
+        found_special = False
+        entries = text.split()
         i = 0
         while i < len(entries):
             entry = entries[i]
             
-            # Improved handling for formats like 12-56-78r1000
-            if 'r' in entry and '-' in entry:
-                parts = entry.split('r')
-                if len(parts) == 2 and parts[1].isdigit():
-                    base_amount = int(parts[1])
-                    reverse_amount = int(parts[1])
-                    
-                    # Split left part by '-' to get numbers
-                    numbers = []
-                    for num_str in parts[0].split('-'):
-                        if num_str.isdigit():
-                            num = int(num_str)
-                            if 0 <= num <= 99:
-                                numbers.append(num)
-                    
-                    if numbers:
-                        for num in numbers:
-                            bets.append(f"{num:02d}-{base_amount}")
-                            rev = reverse_number(num)
-                            bets.append(f"{rev:02d}-{reverse_amount}")
-                            total_amount += base_amount + reverse_amount
-                        i += 1
-                        continue
-            
-            # Improved handling for formats like 12-56-78-1000r500
-            if 'r' in entry and '-' in entry:
-                parts = entry.split('r')
-                if len(parts) == 2 and parts[1].isdigit():
-                    reverse_amount = int(parts[1])
-                    
-                    # Split left part by '-' to get numbers and base amount
-                    left_parts = parts[0].split('-')
-                    if len(left_parts) >= 2 and left_parts[-1].isdigit():
-                        base_amount = int(left_parts[-1])
-                        numbers = []
-                        for num_str in left_parts[:-1]:
-                            if num_str.isdigit():
-                                num = int(num_str)
-                                if 0 <= num <= 99:
-                                    numbers.append(num)
-                        
-                        if numbers:
-                            for num in numbers:
-                                bets.append(f"{num:02d}-{base_amount}")
-                                rev = reverse_number(num)
-                                bets.append(f"{rev:02d}-{reverse_amount}")
-                                total_amount += base_amount + reverse_amount
-                            i += 1
-                            continue
-            
-            # Improved handling for formats like 67/34/12/1000r500
-            if '/' in entry and 'r' in entry:
-                parts = entry.split('/')
-                # Find the part with 'r'
-                r_index = -1
-                for j, part in enumerate(parts):
-                    if 'r' in part:
-                        r_index = j
-                        break
-                
-                if r_index > 0:
-                    numbers = []
-                    for j in range(r_index):
-                        if parts[j].isdigit():
-                            num = int(parts[j])
-                            if 0 <= num <= 99:
-                                numbers.append(num)
-                    
-                    if parts[r_index].count('r') == 1:
-                        amt_parts = parts[r_index].split('r')
-                        if len(amt_parts) == 2 and amt_parts[0].isdigit() and amt_parts[1].isdigit():
-                            base_amt = int(amt_parts[0])
-                            reverse_amt = int(amt_parts[1])
-                            
-                            for num in numbers:
-                                bets.append(f"{num:02d}-{base_amt}")
-                                rev = reverse_number(num)
-                                bets.append(f"{rev:02d}-{reverse_amt}")
-                                total_amount += base_amt + reverse_amt
-                            
-                            # Check if there's a next part for additional reverse
-                            if r_index + 1 < len(parts) and parts[r_index+1].isdigit():
-                                extra_rev_amt = int(parts[r_index+1])
-                                for num in numbers:
-                                    rev = reverse_number(num)
-                                    bets.append(f"{rev:02d}-{extra_rev_amt}")
-                                    total_amount += extra_rev_amt
-                                i += 1  # Skip extra amount
-                                
-                            i += 1
-                            continue
-            
-            # Improved handling for formats like 12-34-56-100r200
-            if '-' in entry and 'r' in entry:
-                parts = entry.split('-')
-                # Find the part with 'r'
-                r_index = -1
-                for j, part in enumerate(parts):
-                    if 'r' in part:
-                        r_index = j
-                        break
-                
-                if r_index > 0:
-                    numbers = []
-                    for j in range(r_index):
-                        if parts[j].isdigit():
-                            num = int(parts[j])
-                            if 0 <= num <= 99:
-                                numbers.append(num)
-                    
-                    if parts[r_index].count('r') == 1:
-                        amt_parts = parts[r_index].split('r')
-                        if len(amt_parts) == 2 and amt_parts[0].isdigit() and amt_parts[1].isdigit():
-                            base_amt = int(amt_parts[0])
-                            reverse_amt = int(amt_parts[1])
-                            
-                            for num in numbers:
-                                bets.append(f"{num:02d}-{base_amt}")
-                                rev = reverse_number(num)
-                                bets.append(f"{rev:02d}-{reverse_amt}")
-                                total_amount += base_amt + reverse_amt
-                            
-                            # Check if there's a next part for additional reverse
-                            if r_index + 1 < len(parts) and parts[r_index+1].isdigit():
-                                extra_rev_amt = int(parts[r_index+1])
-                                for num in numbers:
-                                    rev = reverse_number(num)
-                                    bets.append(f"{rev:02d}-{extra_rev_amt}")
-                                    total_amount += extra_rev_amt
-                                i += 1  # Skip extra amount
-                                
-                            i += 1
-                            continue
-            
-            # Original parsing logic with improvements
-            if i + 2 < len(entries):
-                if (entries[i].isdigit() and entries[i+1].isdigit() and entries[i+2].isdigit()):
-                    num1 = int(entries[i])
-                    num2 = int(entries[i+1])
-                    amt = int(entries[i+2])
-                    
-                    if 0 <= num1 <= 99 and 0 <= num2 <= 99:
-                        bets.append(f"{num1:02d}-{amt}")
-                        bets.append(f"{num2:02d}-{amt}")
-                        total_amount += amt * 2
-                        i += 3
-                        continue
-            
-            if '/' in entry:
-                parts = entry.split('/')
-                if len(parts) >= 3 and all(p.isdigit() for p in parts):
-                    amt = int(parts[-1])
-                    for num_str in parts[:-1]:
-                        num = int(num_str)
-                        if 0 <= num <= 99:
-                            bets.append(f"{num:02d}-{amt}")
-                            total_amount += amt
-                    i += 1
-                    continue
-            
-            if '-' in entry and 'r' not in entry:
-                parts = entry.split('-')
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    num = int(parts[0])
-                    amt = int(parts[1])
-                    if 0 <= num <= 99:
-                        bets.append(f"{num:02d}-{amt}")
-                        total_amount += amt
-                        i += 1
-                        continue
-            
-            if 'r' in entry and '-' not in entry:
-                parts = entry.split('r')
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    num = int(parts[0])
-                    amt = int(parts[1])
-                    rev = reverse_number(num)
-                    if 0 <= num <= 99:
-                        bets.append(f"{num:02d}-{amt}")
-                        bets.append(f"{rev:02d}-{amt}")
-                        total_amount += amt * 2
-                    i += 1
-                    continue
-            
-            if 'r' in entry and '-' in entry:
-                main_part, r_part = entry.split('r', 1)
-                if '-' in main_part:
-                    num_part, amt_part = main_part.split('-')
-                    if num_part.isdigit() and amt_part.isdigit() and r_part.isdigit():
-                        num = int(num_part)
-                        amt1 = int(amt_part)
-                        amt2 = int(r_part)
-                        rev = reverse_number(num)
-                        if 0 <= num <= 99:
-                            bets.append(f"{num:02d}-{amt1}")
-                            bets.append(f"{rev:02d}-{amt2}")
-                            total_amount += amt1 + amt2
-                        i += 1
-                        continue
-            
-            if entry.isdigit() and i+1 < len(entries) and 'r' in entries[i+1]:
-                num = int(entry)
-                r_part = entries[i+1]
-                if r_part.count('r') == 1:
-                    amt_part1, amt_part2 = r_part.split('r')
-                    if amt_part1.isdigit() and amt_part2.isdigit():
-                        amt1 = int(amt_part1)
-                        amt2 = int(amt_part2)
-                        rev = reverse_number(num)
-                        if 0 <= num <= 99:
-                            bets.append(f"{num:02d}-{amt1}")
-                            bets.append(f"{rev:02d}-{amt2}")
-                            total_amount += amt1 + amt2
-                        i += 2
-                        continue
-            
-            if 'အခွေ' in entry or 'အပူးပါအခွေ' in entry:
-                base = entry.replace('အခွေ', '').replace('အပူးပါ', '')
-                if base.isdigit() and len(base) >= 2:
-                    digits = [int(d) for d in base]
-                    pairs = []
-                    for j in range(len(digits)):
-                        for k in range(len(digits)):
-                            if j != k:
-                                combo = digits[j] * 10 + digits[k]
-                                if combo not in pairs:
-                                    pairs.append(combo)
-                    
-                    if 'အပူးပါအခွေ' in entry:
-                        for d in digits:
-                            double = d * 10 + d
-                            if double not in pairs:
-                                pairs.append(double)
-                    
-                    if i+1 < len(entries) and entries[i+1].isdigit():
-                        amt = int(entries[i+1])
-                        for num in pairs:
-                            bets.append(f"{num:02d}-{amt}")
-                            total_amount += amt
-                        i += 2
-                        continue
-            
-            fixed_special_cases = {
-                "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
-                "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
-                "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
-                "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
-            }
-            
+            # Fixed special cases
             if entry in fixed_special_cases:
-                if i+1 < len(entries) and entries[i+1].isdigit():
+                if i+1 < len(entries) and entries[i+1].isdigit() and int(entries[i+1]) >= 100:
                     amt = int(entries[i+1])
                     for num in fixed_special_cases[entry]:
                         bets.append(f"{num:02d}-{amt}")
                         total_amount += amt
                     i += 2
+                    found_special = True
                     continue
             
-            dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
-            found_dynamic = False
+            # Dynamic types
             for dtype in dynamic_types:
                 if entry.endswith(dtype):
                     prefix = entry[:-len(dtype)]
@@ -423,39 +183,155 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 units = [j * 10 + digit_val for j in range(10)]
                                 numbers = list(set(tens + units))
                             
-                            if i+1 < len(entries) and entries[i+1].isdigit():
+                            if i+1 < len(entries) and entries[i+1].isdigit() and int(entries[i+1]) >= 100:
                                 amt = int(entries[i+1])
                                 for num in numbers:
                                     bets.append(f"{num:02d}-{amt}")
                                     total_amount += amt
                                 i += 2
-                                found_dynamic = True
+                                found_special = True
                             break
-            if found_dynamic:
+            if found_special:
                 continue
             
-            if entry.isdigit():
-                num = int(entry)
-                if 0 <= num <= 99:
-                    if i+1 < len(entries) and entries[i+1].isdigit():
+            # Special wheel case
+            if 'အခွေ' in entry or 'အပူးပါအခွေ' in entry:
+                base = entry.replace('အခွေ', '').replace('အပူးပါ', '')
+                if base.isdigit() and len(base) >= 2:
+                    digits = [int(d) for d in base]
+                    pairs = []
+                    for j in range(len(digits)):
+                        for k in range(len(digits)):
+                            if j != k:
+                                combo = digits[j] * 10 + digits[k]
+                                if combo not in pairs:
+                                    pairs.append(combo)
+                    
+                    if 'အပူးပါအခွေ' in entry:
+                        for d in digits:
+                            double = d * 10 + d
+                            if double not in pairs:
+                                pairs.append(double)
+                    
+                    if i+1 < len(entries) and entries[i+1].isdigit() and int(entries[i+1]) >= 100:
                         amt = int(entries[i+1])
-                        bets.append(f"{num:02d}-{amt}")
-                        total_amount += amt
+                        for num in pairs:
+                            bets.append(f"{num:02d}-{amt}")
+                            total_amount += amt
                         i += 2
-                    else:
-                        bets.append(f"{num:02d}-500")
-                        total_amount += 500
+                        found_special = True
+                        continue
+            i += 1
+
+        # Reverse format handler
+        reverse_pattern = re.compile(r'(\d+)[rR](\d+)')
+        i = 0
+        while i < len(entries) and not found_special:
+            entry = entries[i]
+            reverse_match = reverse_pattern.search(entry)
+            
+            if reverse_match:
+                # Handle reverse format in single entry
+                num_part = reverse_match.group(1)
+                reverse_amt = int(reverse_match.group(2))
+                base_amt = reverse_amt
+                
+                # Check for base amount before 'r'
+                base_parts = entry.split('r')[0].split('R')[0]
+                if any(sep in base_parts for sep in ['-', '/', '.', '+', '=', '*', ',']):
+                    parts = re.split(r'[-/.,+=* ]', base_parts)
+                    numbers = []
+                    for part in parts:
+                        if part.isdigit():
+                            num = int(part)
+                            if 0 <= num <= 99:
+                                numbers.append(num)
+                    
+                    if numbers:
+                        for num in numbers:
+                            bets.append(f"{num:02d}-{base_amt}")
+                            rev = reverse_number(num)
+                            bets.append(f"{rev:02d}-{reverse_amt}")
+                            total_amount += base_amt + reverse_amt
                         i += 1
-                    continue
+                        continue
+                elif base_parts.isdigit():
+                    num = int(base_parts)
+                    if 0 <= num <= 99:
+                        bets.append(f"{num:02d}-{base_amt}")
+                        rev = reverse_number(num)
+                        bets.append(f"{rev:02d}-{reverse_amt}")
+                        total_amount += base_amt + reverse_amt
+                        i += 1
+                        continue
+            
+            # Multi-part reverse format
+            if i+1 < len(entries) and ('r' in entries[i+1] or 'R' in entries[i+1]):
+                num_str = entry
+                r_part = entries[i+1]
+                r_parts = re.split(r'[rR]', r_part)
+                if len(r_parts) == 2 and r_parts[0].isdigit() and r_parts[1].isdigit():
+                    base_amt = int(r_parts[0])
+                    reverse_amt = int(r_parts[1])
+                    
+                    # Handle multiple numbers
+                    numbers = []
+                    for part in re.split(r'[-/.,+=* ]', num_str):
+                        if part.isdigit():
+                            num = int(part)
+                            if 0 <= num <= 99:
+                                numbers.append(num)
+                    
+                    if numbers:
+                        for num in numbers:
+                            bets.append(f"{num:02d}-{base_amt}")
+                            rev = reverse_number(num)
+                            bets.append(f"{rev:02d}-{reverse_amt}")
+                            total_amount += base_amt + reverse_amt
+                        i += 2
+                        continue
             
             i += 1
 
+        # General number-amount parsing
+        if not bets and not found_special:
+            # Extract all digit sequences
+            all_digits = re.findall(r'\d+', text)
+            numbers = []
+            amount = None
+            
+            # First find the amount (>=100 integers)
+            for digit in all_digits:
+                num_val = int(digit)
+                if num_val >= 100:
+                    amount = num_val
+                    break
+            
+            # If amount found, collect all valid numbers (00-99)
+            if amount is not None:
+                for digit in all_digits:
+                    num_val = int(digit)
+                    if 0 <= num_val <= 99:
+                        numbers.append(num_val)
+                
+                # Remove duplicates and sort
+                numbers = sorted(set(numbers))
+                
+                for num in numbers:
+                    bets.append(f"{num:02d}-{amount}")
+                    total_amount += amount
+        
+        # If no bets found by any method
+        if not bets:
+            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000, 12/34r1000, 12/34/56-1500")
+            return
+
+        # Update data stores
         if user.username not in user_data:
             user_data[user.username] = {}
         if key not in user_data[user.username]:
             user_data[user.username][key] = []
 
-        # Initialize ledger for this date if not exists
         if key not in ledger:
             ledger[key] = {}
 
@@ -464,20 +340,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             num = int(num)
             amt = int(amt)
             
-            # Update ledger for this date
+            # Update ledger
             ledger[key][num] = ledger[key].get(num, 0) + amt
             
             # Update user data
             user_data[user.username][key].append((num, amt))
 
-        if bets:
-            response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
-            keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
-            message_store[(user.id, update.message.message_id)] = (sent_message.message_id, bets, total_amount, key)
-        else:
-            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ")
+        # Send confirmation with delete button
+        response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
+        keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
+        message_store[(user.id, update.message.message_id)] = (sent_message.message_id, bets, total_amount, key)
             
     except Exception as e:
         logger.error(f"Error in handle_message: {str(e)}")
@@ -1273,7 +1147,7 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
         else:
-            await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်း�မရှိပါ")
+            await query.edit_message_text(f"ℹ️ {username} အတွက် စာရင်းမရှိပါ")
             
     except Exception as e:
         logger.error(f"Error in posthis_callback: {str(e)}")
@@ -1779,7 +1653,6 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(datedelete_confirm, pattern=r"^datedelete_confirm$"))
 
     # Message handlers
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("🚀 Bot is starting...")
