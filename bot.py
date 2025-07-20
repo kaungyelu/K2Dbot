@@ -1346,24 +1346,22 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(total_net)}({overall_status})")
 
 
-            # Split long messages
-            max_length = 4000  # Telegram message limit
-            current_msg = []
-            current_len = 0
-            
-            for line in msg:
-                line_len = len(line) + 1  # +1 for newline
-                if current_len + line_len > max_length:
-                    await query.edit_message_text("\n".join(current_msg))
-                    current_msg = []
-                    current_len = 0
-                current_msg.append(line)
-                current_len += line_len
-            
-            if current_msg:
-                await query.edit_message_text("\n".join(current_msg))
-        else:
-            await query.edit_message_text("ℹ️ ရွေးချယ်ထားသည့် နေ့ရက်များတွင် ဒေတာမရှိပါ")
+             # Telegram message limit ထက်မကျော်အောင် စာပိုဒ်ခွဲပို့ခြင်း
+        max_length = 4000
+        current_msg = []
+        current_len = 0
+        
+        for line in msg:
+            line_len = len(line) + 1
+            if current_len + line_len > max_length:
+                await context.bot.send_message(chat_id=query.message.chat_id, text="\n".join(current_msg))
+                current_msg = []
+                current_len = 0
+            current_msg.append(line)
+            current_len += line_len
+        
+        if current_msg:
+            await query.edit_message_text("\n".join(current_msg))
         
     except Exception as e:
         logger.error(f"Error in dateall_view: {str(e)}")
