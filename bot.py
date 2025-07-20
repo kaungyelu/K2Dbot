@@ -223,21 +223,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         continue
             i += 1
 
-        # Reverse format handler
+        # Reverse format handler - Updated logic
         reverse_pattern = re.compile(r'(\d+)[rR](\d+)')
+        reverse_single_pattern = re.compile(r'[rR](\d+)')
+        
         if not found_special:
             # Check for reverse format in the entire message
             reverse_match = re.search(reverse_pattern, text)
-            if reverse_match:
-                base_amt = int(reverse_match.group(1))
-                reverse_amt = int(reverse_match.group(2))
-                # Remove the reverse part from the text for number extraction
-                text_without_reverse = text.replace(reverse_match.group(0), '', 1)
+            reverse_single_match = re.search(reverse_single_pattern, text)
+            
+            if reverse_match or reverse_single_match:
+                if reverse_match:
+                    # Two amount format (e.g. 12r1000 or 12-1000r500)
+                    base_amt = int(reverse_match.group(1))
+                    reverse_amt = int(reverse_match.group(2))
+                    # Remove the reverse part from the text for number extraction
+                    text_without_reverse = text.replace(reverse_match.group(0), '', 1)
+                else:
+                    # Single amount format (e.g. r1000)
+                    base_amt = int(reverse_single_match.group(1))
+                    reverse_amt = base_amt
+                    text_without_reverse = text.replace(reverse_single_match.group(0), '', 1)
+                
                 # Extract all numbers (0-99) from the modified text
-                all_digits = re.findall(r'\d+', text_without_reverse)
+                all_numbers = re.findall(r'\d+', text_without_reverse)
                 numbers = []
-                for digit in all_digits:
-                    num_val = int(digit)
+                for num_str in all_numbers:
+                    num_val = int(num_str)
                     if 0 <= num_val <= 99:
                         numbers.append(num_val)
                 
@@ -1191,6 +1203,7 @@ async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in dateall_toggle: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
 
+
 async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1205,8 +1218,8 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
             return
             
-        # Aggregate data for each user across selected dates
-        user_totals = {}
+        # Aggregate data for each user across selected dates - Updated to match /total format
+        user_reports = {}
         overall_total = 0
         overall_power_total = 0
         
@@ -1225,28 +1238,68 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             user_pamt += amt
             
             if user_total_amt > 0:
-                user_totals[user] = {
+                com = com_data.get(user, 0)
+                za = za_data.get(user, 0)
+                
+                commission_amt = (user_total_amt * com) // 100
+                after_com = user_total_amt - commission_amt
+                win_amt = user_pamt * za
+                
+                net = after_com - win_amt
+                status = "ဒိုင်ကပေးရမည်" if net < 0 else "ဒိုင်ကရမည်"
+                
+                user_reports[user] = {
                     'total': user_total_amt,
-                    'power_total': user_pamt
+                    'power_total': user_pamt,
+                    'com': com,
+                    'za': za,
+                    'commission': commission_amt,
+                    'after_com': after_com,
+                    'win_amt': win_amt,
+                    'net': net,
+                    'status': status
                 }
+                
                 overall_total += user_total_amt
                 overall_power_total += user_pamt
         
-        # Build report
+        # Build report in /total style
         msg = ["📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
         msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
         
-        for user, data in user_totals.items():
+        for user, data in user_reports.items():
             msg.append(f"👤 {user}:")
-            msg.append(f"  💵 စုစုပေါင်း: {data['total']}")
-            msg.append(f"  🔴 Power Number စုစုပေါင်း: {data['power_total']}")
-            msg.append("")
+            msg.append(f"💵 စုစုပေါင်း: {data['total']}")
+            msg.append(f"📊 Com({data['com']}%) ➤ {data['commission']}")
+            msg.append(f"💰 Com ပြီး: {data['after_com']}")
+            msg.append(f"🔢 Power Number စုစုပေါင်း: {data['power_total']}")
+            msg.append(f"🎯 Za({data['za']}) ➤ {data['win_amt']}")
+            msg.append(f"📈 ရလဒ်: {abs(data['net'])} ({data['status']})")
+            msg.append("-----------------")
         
-        if user_totals:
-            msg.append(f"📊 စုစုပေါင်း:")
-            msg.append(f"  💵 လောင်းကြေးစုစုပေါင်း: {overall_total}")
-            msg.append(f"  🔴 Power Number စုစုပေါင်း: {overall_power_total}")
-            await query.edit_message_text("\n".join(msg))
+        if user_reports:
+            total_net = sum(data['net'] for data in user_reports.values())
+            msg.append(f"\n📊 စုစုပေါင်း:")
+            msg.append(f"💵 လောင်းကြေးစုစုပေါင်း: {overall_total}")
+            msg.append(f"🔴 Power Number စုစုပေါင်း: {overall_power_total}")
+            msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(total_net)} ({'ဒိုင်အရှုံး' if total_net < 0 else 'ဒိုင်အမြတ်'})")
+            
+            # Split long messages
+            max_length = 4000  # Telegram message limit
+            current_msg = []
+            current_len = 0
+            
+            for line in msg:
+                line_len = len(line) + 1  # +1 for newline
+                if current_len + line_len > max_length:
+                    await query.edit_message_text("\n".join(current_msg))
+                    current_msg = []
+                    current_len = 0
+                current_msg.append(line)
+                current_len += line_len
+            
+            if current_msg:
+                await query.edit_message_text("\n".join(current_msg))
         else:
             await query.edit_message_text("ℹ️ ရွေးချယ်ထားသည့် နေ့ရက်များတွင် ဒေတာမရှိပါ")
         
@@ -1550,6 +1603,7 @@ async def datedelete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error(f"Error in datedelete_confirm: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
 
+
 if __name__ == "__main__":
     if not TOKEN:
         raise ValueError("❌ BOT_TOKEN environment variable is not set")
@@ -1588,7 +1642,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
     app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
     
-    # New calendar handlers
+    # Calendar handlers
     app.add_handler(CallbackQueryHandler(show_calendar, pattern=r"^cdate_calendar$"))
     app.add_handler(CallbackQueryHandler(handle_day_selection, pattern=r"^cdate_day:"))
     app.add_handler(CallbackQueryHandler(set_am, pattern=r"^cdate_am$"))
