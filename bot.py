@@ -53,10 +53,14 @@ def get_current_date_key():
 
 def get_available_dates():
     dates = set()
+    # Get dates from user data
     for user_data_dict in user_data.values():
         dates.update(user_data_dict.keys())
+    # Get dates from ledger
     dates.update(ledger.keys())
+    # Get dates from break limits
     dates.update(break_limits.keys())
+    # Get dates from pnumber
     dates.update(pnumber_per_date.keys())
     return sorted(dates, reverse=True)
 
@@ -141,166 +145,157 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         bets = []
         total_amount = 0
-        error_messages = []
         
-        # Process each line separately
-        lines = text.split('\n')
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            try:
-                # Check for special cases first
-                found_special = False
-                entries = line.split()
-                i = 0
-                while i < len(entries):
-                    entry = entries[i]
-                    
-                    # Fixed special cases
-                    if entry in fixed_special_cases:
-                        if i+1 < len(entries) and entries[i+1].isdigit() and int(entries[i+1]) >= 100:
-                            amt = int(entries[i+1])
-                            for num in fixed_special_cases[entry]:
-                                bets.append(f"{num:02d}-{amt}")
-                                total_amount += amt
-                            i += 2
-                            found_special = True
-                            continue
-                    
-                    # Dynamic types
-                    for dtype in dynamic_types:
-                        if entry.endswith(dtype):
-                            prefix = entry[:-len(dtype)]
-                            if prefix.isdigit():
-                                digit_val = int(prefix)
-                                if 0 <= digit_val <= 9:
-                                    numbers = []
-                                    if dtype == "ထိပ်":
-                                        numbers = [digit_val * 10 + j for j in range(10)]
-                                    elif dtype == "ပိတ်":
-                                        numbers = [j * 10 + digit_val for j in range(10)]
-                                    elif dtype == "ဘရိတ်":
-                                        numbers = [n for n in range(100) if (n//10 + n%10) % 10 == digit_val]
-                                    elif dtype == "အပါ":
-                                        tens = [digit_val * 10 + j for j in range(10)]
-                                        units = [j * 10 + digit_val for j in range(10)]
-                                        numbers = list(set(tens + units))
-                                    
-                                    if i+1 < len(entries) and entries[i+1].isdigit() and int(entries[i+1]) >= 100:
-                                        amt = int(entries[i+1])
-                                        for num in numbers:
-                                            bets.append(f"{num:02d}-{amt}")
-                                            total_amount += amt
-                                        i += 2
-                                        found_special = True
-                                    break
-                    if found_special:
-                        continue
-                    
-                    # Special wheel case
-                    if 'အခွေ' in entry or 'အပူးပါအခွေ' in entry:
-                        base = entry.replace('အခွေ', '').replace('အပူးပါ', '')
-                        if base.isdigit() and len(base) >= 2:
-                            digits = [int(d) for d in base]
-                            pairs = []
-                            for j in range(len(digits)):
-                                for k in range(len(digits)):
-                                    if j != k:
-                                        combo = digits[j] * 10 + digits[k]
-                                        if combo not in pairs:
-                                            pairs.append(combo)
-                            
-                            if 'အပူးပါအခွေ' in entry:
-                                for d in digits:
-                                    double = d * 10 + d
-                                    if double not in pairs:
-                                        pairs.append(double)
+        # Check for special cases first
+        found_special = False
+        entries = text.split()
+        i = 0
+        while i < len(entries):
+            entry = entries[i]
+            
+            # Fixed special cases
+            if entry in fixed_special_cases:
+                if i+1 < len(entries) and entries[i+1].isdigit() and int(entries[i+1]) >= 100:
+                    amt = int(entries[i+1])
+                    for num in fixed_special_cases[entry]:
+                        bets.append(f"{num:02d}-{amt}")
+                        total_amount += amt
+                    i += 2
+                    found_special = True
+                    continue
+            
+            # Dynamic types
+            for dtype in dynamic_types:
+                if entry.endswith(dtype):
+                    prefix = entry[:-len(dtype)]
+                    if prefix.isdigit():
+                        digit_val = int(prefix)
+                        if 0 <= digit_val <= 9:
+                            numbers = []
+                            if dtype == "ထိပ်":
+                                numbers = [digit_val * 10 + j for j in range(10)]
+                            elif dtype == "ပိတ်":
+                                numbers = [j * 10 + digit_val for j in range(10)]
+                            elif dtype == "ဘရိတ်":
+                                numbers = [n for n in range(100) if (n//10 + n%10) % 10 == digit_val]
+                            elif dtype == "အပါ":
+                                tens = [digit_val * 10 + j for j in range(10)]
+                                units = [j * 10 + digit_val for j in range(10)]
+                                numbers = list(set(tens + units))
                             
                             if i+1 < len(entries) and entries[i+1].isdigit() and int(entries[i+1]) >= 100:
                                 amt = int(entries[i+1])
-                                for num in pairs:
+                                for num in numbers:
                                     bets.append(f"{num:02d}-{amt}")
                                     total_amount += amt
                                 i += 2
                                 found_special = True
-                                continue
-                    i += 1
-
-                # If special cases found, skip other processing for this line
-                if found_special:
-                    continue
-
-                # Check for reverse format with proper separator
-                if ' r' in line.lower() or '-r' in line.lower():
-                    if ' r' in line:
-                        parts = line.split(' r')
-                    else:
-                        parts = line.split('-r')
+                            break
+            if found_special:
+                continue
+            
+            # Special wheel case
+            if 'အခွေ' in entry or 'အပူးပါအခွေ' in entry:
+                base = entry.replace('အခွေ', '').replace('အပူးပါ', '')
+                if base.isdigit() and len(base) >= 2:
+                    digits = [int(d) for d in base]
+                    pairs = []
+                    for j in range(len(digits)):
+                        for k in range(len(digits)):
+                            if j != k:
+                                combo = digits[j] * 10 + digits[k]
+                                if combo not in pairs:
+                                    pairs.append(combo)
                     
-                    if len(parts) != 2:
-                        raise ValueError("Invalid r notation format (Use space or hyphen before r)")
+                    if 'အပူးပါအခွေ' in entry:
+                        for d in digits:
+                            double = d * 10 + d
+                            if double not in pairs:
+                                pairs.append(double)
                     
-                    numbers_part = parts[0]
-                    amount = int(parts[1])
-                    
-                    if amount < 100:
-                        raise ValueError("Amount must be ≥100 after r")
-                    
-                    # Extract all numbers (00-99)
-                    numbers = []
-                    for num_str in re.findall(r'\d+', numbers_part):
-                        num = int(num_str)
-                        if 0 <= num <= 99:
-                            numbers.append(num)
-                    
-                    if not numbers:
-                        raise ValueError("No valid numbers before r")
-                    
-                    for num in numbers:
-                        bets.append(f"{num:02d}-{amount}")
-                        rev = reverse_number(num)
-                        bets.append(f"{rev:02d}-{amount}")
-                        total_amount += amount * 2
-                    continue
-
-                # Process normal number-amount pairs with various separators
-                if '-' in line:
-                    num_part, amt_part = line.split('-', 1)
-                    try:
-                        amount = int(amt_part)
-                        if amount < 100:
-                            raise ValueError("Amount must be ≥100")
-                        
-                        # Extract all numbers (00-99)
-                        numbers = []
-                        for num_str in re.findall(r'\d+', num_part):
-                            num = int(num_str)
-                            if 0 <= num <= 99:
-                                numbers.append(num)
-                        
-                        if not numbers:
-                            raise ValueError("No valid numbers before -")
-                        
-                        for num in numbers:
-                            bets.append(f"{num:02d}-{amount}")
-                            total_amount += amount
+                    if i+1 < len(entries) and entries[i+1].isdigit() and int(entries[i+1]) >= 100:
+                        amt = int(entries[i+1])
+                        for num in pairs:
+                            bets.append(f"{num:02d}-{amt}")
+                            total_amount += amt
+                        i += 2
+                        found_special = True
                         continue
-                    except ValueError as e:
-                        error_messages.append(f"❌ Error in '{line}': {str(e)}")
-                        continue
+            i += 1
 
-                # If no valid format found
-                error_messages.append(f"⚠️ Invalid format: {line} (Use proper separators: space or hyphen)")
+        # Reverse format handler - Updated logic
+        reverse_pattern = re.compile(r'(\d+)[rR](\d+)')
+        reverse_single_pattern = re.compile(r'[rR](\d+)')
+        
+        if not found_special:
+            # Check for reverse format in the entire message
+            reverse_match = re.search(reverse_pattern, text)
+            reverse_single_match = re.search(reverse_single_pattern, text)
+            
+            if reverse_match or reverse_single_match:
+                if reverse_match:
+                    # Two amount format (e.g. 12r1000 or 12-1000r500)
+                    base_amt = int(reverse_match.group(1))
+                    reverse_amt = int(reverse_match.group(2))
+                    # Remove the reverse part from the text for number extraction
+                    text_without_reverse = text.replace(reverse_match.group(0), '', 1)
+                else:
+                    # Single amount format (e.g. r1000)
+                    base_amt = int(reverse_single_match.group(1))
+                    reverse_amt = base_amt
+                    text_without_reverse = text.replace(reverse_single_match.group(0), '', 1)
                 
-            except ValueError as e:
-                error_messages.append(f"❌ Error in '{line}': {str(e)}")
-            except Exception as e:
-                error_messages.append(f"❌ Processing error in '{line}': {str(e)}")
+                # Extract all numbers (0-99) from the modified text
+                all_numbers = re.findall(r'\d+', text_without_reverse)
+                numbers = []
+                for num_str in all_numbers:
+                    num_val = int(num_str)
+                    if 0 <= num_val <= 99:
+                        numbers.append(num_val)
+                
+                if numbers:
+                    for num in numbers:
+                        bets.append(f"{num:02d}-{base_amt}")
+                        rev = reverse_number(num)
+                        bets.append(f"{rev:02d}-{reverse_amt}")
+                        total_amount += base_amt + reverse_amt
+                    found_special = True
 
-        if not bets and not error_messages:
-            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000, 12/34 r1000")
+        # General number-amount parsing
+        if not bets and not found_special:
+            # Extract all digit sequences
+            all_digits = re.findall(r'\d+', text)
+            numbers = []
+            amounts = []
+            current_group = []
+            
+            # Parse tokens with different separators
+            tokens = re.split(r'[,\s\-+.,=*/\r]', text)
+            tokens = [t.strip() for t in tokens if t.strip()]
+            
+            # Process tokens to handle number-amount pairs
+            for token in tokens:
+                if token.isdigit():
+                    num_val = int(token)
+                    if 0 <= num_val <= 99:
+                        current_group.append(num_val)
+                    elif num_val >= 100:
+                        if current_group:
+                            for num in current_group:
+                                bets.append(f"{num:02d}-{num_val}")
+                                total_amount += num_val
+                            current_group = []
+            
+            # Handle leftover numbers
+            if current_group and amounts:
+                amt = amounts[-1]
+                for num in current_group:
+                    bets.append(f"{num:02d}-{amt}")
+                    total_amount += amt
+        
+        # If no bets found by any method
+        if not bets:
+            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000, 12/34r1000, 12/34/56-1500")
             return
 
         # Update data stores
@@ -317,25 +312,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             num = int(num)
             amt = int(amt)
             
+            # Update ledger
             if num not in ledger[key]:
                 ledger[key][num] = 0
             ledger[key][num] += amt
             
+            # Update user data
             user_data[user.username][key].append((num, amt))
 
-        # Prepare response
-        response = []
-        if bets:
-            response.append("\n".join(bets))
-            response.append(f"စုစုပေါင်း {total_amount} ကျပ်")
-        
-        if error_messages:
-            response.append("\n\nErrors:")
-            response.append("\n".join(error_messages))
-
+        # Send confirmation with delete button
+        response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
         keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        sent_message = await update.message.reply_text("\n".join(response), reply_markup=reply_markup)
+        sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
         message_store[(user.id, update.message.message_id)] = (sent_message.message_id, bets, total_amount, key)
             
     except Exception as e:
