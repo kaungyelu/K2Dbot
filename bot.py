@@ -65,7 +65,7 @@ def get_available_dates():
     return sorted(dates, reverse=True)
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+keyboard = []
     if update.effective_user.id == admin_id:
         keyboard = [
             [
@@ -110,6 +110,14 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id, current_working_date
+    admin_id = update.effective_user.id
+    current_working_date = get_current_date_key()
+    logger.info(f"Admin set to: {admin_id}")
+    await update.message.reply_text("🤖 Bot started. Admin privileges granted!")
+    await show_menu(update, context)
 async def handle_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -158,15 +166,7 @@ async def handle_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.error(f"Error in handle_menu_buttons: {str(e)}")
         await query.edit_message_text("❌ အမှားတစ်ခုဖြစ်ပွားခဲ့သည်")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, current_working_date
-    admin_id = update.effective_user.id
-    current_working_date = get_current_date_key()
-    logger.info(f"Admin set to: {admin_id}")
-    await update.message.reply_text("🤖 Bot started. Admin privileges granted!")
-    await show_menu(update, context)
-
+        
 async def dateopen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
     if update.effective_user.id != admin_id:
