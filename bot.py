@@ -64,6 +64,56 @@ def get_available_dates():
     dates.update(pnumber_per_date.keys())
     return sorted(dates, reverse=True)
 
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = []
+    if update.effective_user.id == admin_id:
+        keyboard = [
+            ["/dateopen", "/dateclose"],
+            ["/ledger", "/break"],
+            ["/overbuy", "/pnumber"],
+            ["/comandza", "/total"],
+            ["/tsent", "/alldata"],
+            ["/reset", "/posthis", "/dateall"],
+            ["/Cdate", "/Ddate"]
+        ]
+    else:
+        keyboard = [
+            ["/posthis"]
+        ]
+    
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("မီနူးကိုရွေးချယ်ပါ", reply_markup=reply_markup)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id, current_working_date
+    admin_id = update.effective_user.id
+    current_working_date = get_current_date_key()
+    logger.info(f"Admin set to: {admin_id}")
+    await update.message.reply_text("🤖 Bot started. Admin privileges granted!")
+    await show_menu(update, context)
+
+async def dateopen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ Admin only command")
+        return
+        
+    key = get_current_date_key()
+    date_control[key] = True
+    logger.info(f"Ledger opened for {key}")
+    await update.message.reply_text(f"✅ {key} စာရင်းဖွင့်ပြီးပါပြီ")
+
+async def dateclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ Admin only command")
+        return
+        
+    key = get_current_date_key()
+    date_control[key] = False
+    logger.info(f"Ledger closed for {key}")
+    await update.message.reply_text(f"✅ {key} စာရင်းပိတ်လိုက်ပါပြီ")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
