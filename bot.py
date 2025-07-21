@@ -398,8 +398,8 @@ async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in delete_bet: {str(e)}")
         await query.edit_message_text("❌ Error occurred while processing deletion")
-        
-        async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
