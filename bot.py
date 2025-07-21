@@ -356,15 +356,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Update user data
             user_data[user.username][key].append((num, amt))
 
-        # Send confirmation with delete button (only for admin)
+        # Send confirmation with delete button (visible only to admin)
         response = "\n".join(all_bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
-        
-        if update.effective_user.id == admin_id:
-            keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
-        else:
-            sent_message = await update.message.reply_text(response)
+
+        # Always include delete button but make it admin-only
+        keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{update.effective_user.id}:{update.message.message_id}:{key}")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        sent_message = await update.message.reply_text(
+            response,
+            reply_markup=reply_markup if update.effective_user.id == admin_id else None
+        )
             
         message_store[(user.id, update.message.message_id)] = (sent_message.message_id, all_bets, total_amount, key)
             
@@ -381,20 +382,11 @@ async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(user_id_str)
         message_id = int(message_id_str)
         
+        # Only admin can interact with delete button
         if query.from_user.id != admin_id:
-            if (user_id, message_id) in message_store:
-                sent_message_id, bets, total_amount, _ = message_store[(user_id, message_id)]
-                response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
-                keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user_id}:{message_id}:{date_key}")]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await query.edit_message_text(
-                    text=f"❌ User များမဖျက်နိုင်ပါ၊ Admin ကိုဆက်သွယ်ပါ\n\n{response}",
-                    reply_markup=reply_markup
-                )
-            else:
-                await query.edit_message_text("❌ User များမဖျက်နိုင်ပါ၊ Admin ကိုဆက်သွယ်ပါ")
+            await query.edit_message_text("❌ Admin only action")
             return
-        
+            
         keyboard = [
             [InlineKeyboardButton("✅ OK", callback_data=f"confirm_delete:{user_id}:{message_id}:{date_key}")],
             [InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_delete:{user_id}:{message_id}:{date_key}")]
@@ -1682,6 +1674,7 @@ async def datedelete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error(f"Error in datedelete_confirm: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
+
 
 
 if __name__ == "__main__":
