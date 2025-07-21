@@ -65,7 +65,7 @@ def get_available_dates():
     return sorted(dates, reverse=True)
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-keyboard = []
+
     if update.effective_user.id == admin_id:
         keyboard = [
             [
