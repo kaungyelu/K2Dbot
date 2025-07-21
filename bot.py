@@ -359,12 +359,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send confirmation with delete button (visible only to admin)
         response = "\n".join(all_bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
 
-        # Always include delete button but make it admin-only
-        keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{update.effective_user.id}:{update.message.message_id}:{key}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        # Delete button ကို admin သာမြင်ရမည်
+        if update.effective_user.id == admin_id:
+            keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{update.effective_user.id}:{update.message.message_id}:{key}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+        else:
+            reply_markup = None
+            
         sent_message = await update.message.reply_text(
             response,
-            reply_markup=reply_markup if update.effective_user.id == admin_id else None
+            reply_markup=reply_markup
         )
             
         message_store[(user.id, update.message.message_id)] = (sent_message.message_id, all_bets, total_amount, key)
@@ -397,6 +401,19 @@ async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in delete_bet: {str(e)}")
         await query.edit_message_text("❌ Error occurred while processing deletion")
+# Group တွင် message ဖျက်ခြင်းအတွက် function အသစ်
+async def delete_message_in_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        # Admin သာဖျက်နိုင်မည်
+        if update.effective_user.id != admin_id:
+            return
+            
+        # မိမိကိုယ်တိုင်ပို့သော message မဟုတ်လျှင်
+        if update.message.from_user.id != admin_id:
+            await update.message.delete()
+            
+    except Exception as e:
+        logger.error(f"Error deleting message: {str(e)}")
 
 async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1729,6 +1746,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(datedelete_confirm, pattern=r"^datedelete_confirm$"))
 
     # Message handlers
+      app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, delete_message_in_group))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
