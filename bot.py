@@ -65,9 +65,8 @@ def get_available_dates():
     return sorted(dates, reverse=True)
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if user_id == admin_id:
+    keyboard = []
+    if update.effective_user.id == admin_id:
         keyboard = [
             [
                 InlineKeyboardButton("အရောင်းဖွင့်ရန်", callback_data="dateopen"),
