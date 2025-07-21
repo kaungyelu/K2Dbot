@@ -65,51 +65,24 @@ def get_available_dates():
     return sorted(dates, reverse=True)
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+    keyboard = []
     if update.effective_user.id == admin_id:
         keyboard = [
-            [
-                InlineKeyboardButton("အရောင်းဖွင့်ရန်", callback_data="dateopen"),
-                InlineKeyboardButton("အရောင်းပိတ်ရန်", callback_data="dateclose")
-            ],
-            [
-                InlineKeyboardButton("လည်ချာ", callback_data="ledger"),
-                InlineKeyboardButton("ဘရိတ်သတ်မှတ်ရန်", callback_data="break")
-            ],
-            [
-                InlineKeyboardButton("လျှံဂဏန်းများ ဝယ်ရန်", callback_data="overbuy"),
-                InlineKeyboardButton("ပေါက်သီးထည့်ရန်", callback_data="pnumber")
-            ],
-            [
-                InlineKeyboardButton("ကော်နှင့်အဆ ထည့်ရန်", callback_data="comandza"),
-                InlineKeyboardButton("လက်ရှိအချိန်မှစုစုပေါင်း", callback_data="total")
-            ],
-            [
-                InlineKeyboardButton("ဂဏန်းနှင့်ငွေပေါင်း", callback_data="tsent"),
-                InlineKeyboardButton("ကော်မရှင်များ", callback_data="alldata")
-            ],
-            [
-                InlineKeyboardButton("ရှိသမျှDataအကုန်ဖျက်ရန်", callback_data="reset"),
-                InlineKeyboardButton("တစ်ယောက်ခြင်းစာရင်းကြည့်ရန်", callback_data="posthis")
-            ],
-            [
-                InlineKeyboardButton("ရက်အလိုက်စာရင်းစုစုပေါင်း", callback_data="dateall"),
-                InlineKeyboardButton("calendar", callback_data="Cdate")
-            ],
-            [
-                InlineKeyboardButton("ရက်အလိုက်ဖျက်ရန်", callback_data="Ddate")
-            ]
+            ["/dateopen", "/dateclose"],
+            ["/ledger", "/break"],
+            ["/overbuy", "/pnumber"],
+            ["/comandza", "/total"],
+            ["/tsent", "/alldata"],
+            ["/reset", "/posthis", "/dateall"],
+            ["/Cdate", "/Ddate"]
         ]
     else:
         keyboard = [
-            [InlineKeyboardButton("မိမိ၏စာရင်းကြည့်ရန်", callback_data="posthis")]
+            ["/posthis"]
         ]
     
-    await update.message.reply_text(
-        "မီနူးကိုရွေးချယ်ပါ:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("မီနူးကိုရွေးချယ်ပါ", reply_markup=reply_markup)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, current_working_date
@@ -118,51 +91,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Admin set to: {admin_id}")
     await update.message.reply_text("🤖 Bot started. Admin privileges granted!")
     await show_menu(update, context)
-    
-async def handle_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    try:
-        command = query.data
-        
-        # Execute corresponding command function
-        if command == "/dateopen":
-            await dateopen(update, context)
-        elif command == "/dateclose":
-            await dateclose(update, context)
-        elif command == "/ledger":
-            await ledger_summary(update, context)
-        elif command == "/break":
-            await break_command(update, context)
-        elif command == "/overbuy":
-            await overbuy(update, context)
-        elif command == "/pnumber":
-            await pnumber(update, context)
-        elif command == "/comandza":
-            await comandza(update, context)
-        elif command == "/total":
-            await total(update, context)
-        elif command == "/tsent":
-            await tsent(update, context)
-        elif command == "/alldata":
-            await alldata(update, context)
-        elif command == "/reset":
-            await reset_data(update, context)
-        elif command == "/posthis":
-            await posthis(update, context)
-        elif command == "/dateall":
-            await dateall(update, context)
-        elif command == "/Cdate":
-            await change_working_date(update, context)
-        elif command == "/Ddate":
-            await delete_date(update, context)
-        else:
-            await query.edit_message_text("❌ မသိသော command")
 
-    except Exception as e:
-        logger.error(f"Error in handle_menu_buttons: {str(e)}")
-        await query.edit_message_text("❌ အမှားတစ်ခုဖြစ်ပွားခဲ့သည်")
 async def dateopen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
     if update.effective_user.id != admin_id:
@@ -1768,8 +1697,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("Ddate", delete_date))
 
     # Callback handlers
-   
-    app.add_handler(CallbackQueryHandler(handle_menu_buttons))
     app.add_handler(CallbackQueryHandler(comza_input, pattern=r"^comza:"))
     app.add_handler(CallbackQueryHandler(delete_bet, pattern=r"^delete:"))
     app.add_handler(CallbackQueryHandler(confirm_delete, pattern=r"^confirm_delete:"))
