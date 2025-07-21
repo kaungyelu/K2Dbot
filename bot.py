@@ -65,7 +65,7 @@ def get_available_dates():
     return sorted(dates, reverse=True)
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+keyboard = []
     if update.effective_user.id == admin_id:
         keyboard = [
             [
@@ -118,47 +118,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Admin set to: {admin_id}")
     await update.message.reply_text("🤖 Bot started. Admin privileges granted!")
     await show_menu(update, context)
+    
 async def handle_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    user_id = query.from_user.id
-    command = query.data
-    
-    if user_id != admin_id and command != "posthis":
-        await query.edit_message_text("❌ Admin များသာဝင်ရောက်နိုင်သည်")
-        return
-    
     try:
-        if command == "dateopen":
+        command = query.data
+        
+        # Execute corresponding command function
+        if command == "/dateopen":
             await dateopen(update, context)
-        elif command == "dateclose":
+        elif command == "/dateclose":
             await dateclose(update, context)
-        elif command == "ledger":
+        elif command == "/ledger":
             await ledger_summary(update, context)
-        elif command == "break":
+        elif command == "/break":
             await break_command(update, context)
-        elif command == "overbuy":
+        elif command == "/overbuy":
             await overbuy(update, context)
-        elif command == "pnumber":
+        elif command == "/pnumber":
             await pnumber(update, context)
-        elif command == "comandza":
+        elif command == "/comandza":
             await comandza(update, context)
-        elif command == "total":
+        elif command == "/total":
             await total(update, context)
-        elif command == "tsent":
+        elif command == "/tsent":
             await tsent(update, context)
-        elif command == "alldata":
+        elif command == "/alldata":
             await alldata(update, context)
-        elif command == "reset":
+        elif command == "/reset":
             await reset_data(update, context)
-        elif command == "posthis":
+        elif command == "/posthis":
             await posthis(update, context)
-        elif command == "dateall":
+        elif command == "/dateall":
             await dateall(update, context)
-        elif command == "Cdate":
+        elif command == "/Cdate":
             await change_working_date(update, context)
-        elif command == "Ddate":
+        elif command == "/Ddate":
             await delete_date(update, context)
         else:
             await query.edit_message_text("❌ မသိသော command")
@@ -166,7 +163,6 @@ async def handle_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.error(f"Error in handle_menu_buttons: {str(e)}")
         await query.edit_message_text("❌ အမှားတစ်ခုဖြစ်ပွားခဲ့သည်")
-        
 async def dateopen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
     if update.effective_user.id != admin_id:
