@@ -276,35 +276,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Process regular number-amount pairs with r/R (flexible formatting)
             if 'r' in line.lower():
-                # Find all r/R positions
-                r_positions = [m.start() for m in re.finditer(r'[rR]', line)]
+                # Split into parts before and after r/R
+                r_pos = line.lower().find('r')
+                before_r = line[:r_pos]
+                after_r = line[r_pos+1:]
                 
-                for r_pos in r_positions:
-                    before_r = line[:r_pos]
-                    after_r = line[r_pos+1:]
-                    
-                    # Extract numbers before r
-                    nums_before = re.findall(r'\d+', before_r)
-                    nums_before = [int(n) for n in nums_before if 0 <= int(n) <= 99]
-                    
-                    # Extract amounts after r
-                    amounts = re.findall(r'\d+', after_r)
-                    amounts = [int(a) for a in amounts if int(a) >= 100]
-                    
-                    if nums_before and amounts:
-                        if len(amounts) == 1:
-                            # Single amount: apply to both base and reverse
-                            for num in nums_before:
-                                all_bets.append(f"{num:02d}-{amounts[0]}")
-                                all_bets.append(f"{reverse_number(num):02d}-{amounts[0]}")
-                                total_amount += amounts[0] * 2
-                        else:
-                            # Two amounts: first for base, second for reverse
-                            for num in nums_before:
-                                all_bets.append(f"{num:02d}-{amounts[0]}")
-                                all_bets.append(f"{reverse_number(num):02d}-{amounts[1]}")
-                                total_amount += amounts[0] + amounts[1]
-                        break
+                # Extract numbers before r
+                nums_before = re.findall(r'\d+', before_r)
+                nums_before = [int(n) for n in nums_before if 0 <= int(n) <= 99]
+                
+                # Extract amounts after r
+                amounts = re.findall(r'\d+', after_r)
+                amounts = [int(a) for a in amounts if int(a) >= 100]
+                
+                if nums_before and amounts:
+                    if len(amounts) == 1:
+                        # Single amount: apply to both base and reverse
+                        for num in nums_before:
+                            all_bets.append(f"{num:02d}-{amounts[0]}")
+                            all_bets.append(f"{reverse_number(num):02d}-{amounts[0]}")
+                            total_amount += amounts[0] * 2
+                    else:
+                        # Two amounts: first for base, second for reverse
+                        for num in nums_before:
+                            all_bets.append(f"{num:02d}-{amounts[0]}")
+                            all_bets.append(f"{reverse_number(num):02d}-{amounts[1]}")
+                            total_amount += amounts[0] + amounts[1]
+                    continue
 
             # Process regular number-amount pairs without r/R (flexible formatting)
             numbers = []
@@ -358,12 +356,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Update user data
             user_data[user.username][key].append((num, amt))
 
-        # Send confirmation with delete button (always show delete button to admin)
+        # Send confirmation with delete button (only for admin)
         response = "\n".join(all_bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
         
-        keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
+        if update.effective_user.id == admin_id:
+            keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
+        else:
+            sent_message = await update.message.reply_text(response)
             
         message_store[(user.id, update.message.message_id)] = (sent_message.message_id, all_bets, total_amount, key)
             
