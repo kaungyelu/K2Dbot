@@ -331,7 +331,17 @@ async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_id = int(message_id_str)
         
         if query.from_user.id != admin_id:
-            await query.edit_message_text("❌ User များမဖျက်နိုင်ပါ၊ Admin ကိုဆက်သွယ်ပါ")
+            if (user_id, message_id) in message_store:
+                sent_message_id, bets, total_amount, _ = message_store[(user_id, message_id)]
+                response = "\n".join(bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
+                keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user_id}:{message_id}:{date_key}")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    text=f"❌ User များမဖျက်နိုင်ပါ၊ Admin ကိုဆက်သွယ်ပါ\n\n{response}",
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.edit_message_text("❌ User များမဖျက်နိုင်ပါ၊ Admin ကိုဆက်သွယ်ပါ")
             return
         
         keyboard = [
@@ -344,7 +354,8 @@ async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in delete_bet: {str(e)}")
         await query.edit_message_text("❌ Error occurred while processing deletion")
-        async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
