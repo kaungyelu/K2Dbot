@@ -356,17 +356,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Update user data
             user_data[user.username][key].append((num, amt))
 
-        # Send confirmation with delete button (visible only to admin)
+            # Send confirmation with delete button
         response = "\n".join(all_bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
-
-        # Always include delete button but make it admin-only
-        keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{update.effective_user.id}:{update.message.message_id}:{key}")]]
+        keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        sent_message = await update.message.reply_text(
-            response,
-            reply_markup=reply_markup if update.effective_user.id == admin_id else None
-        )
-            
+        sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
         message_store[(user.id, update.message.message_id)] = (sent_message.message_id, all_bets, total_amount, key)
             
     except Exception as e:
