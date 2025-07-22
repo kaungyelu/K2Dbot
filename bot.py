@@ -1284,7 +1284,6 @@ async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in dateall_toggle: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
-
 async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1299,33 +1298,38 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # 2. Initialize data storage
-        user_totals = {}  # {username: {'total': x, 'power': y}}
+        user_reports = {}  # {username: {'total': x, 'power': y, 'com': z, 'za': a}}
         
-        # 3. Process normal bets first
+        # 3. Process normal bets
         for username, user_dates in user_data.items():
             for date in selected_dates:
                 if date in user_dates:
-                    if username not in user_totals:
-                        user_totals[username] = {'total': 0, 'power': 0}
+                    if username not in user_reports:
+                        user_reports[username] = {'total': 0, 'power': 0, 'com': com_data.get(username, 0), 'za': za_data.get(username, 80)}
                     
                     for num, amt in user_dates[date]:
-                        user_totals[username]['total'] += amt
+                        user_reports[username]['total'] += amt
                         if date in pnumber_per_date and num == pnumber_per_date[date]:
-                            user_totals[username]['power'] += amt
+                            user_reports[username]['power'] += amt
 
-        # 4. Process overbuy adjustments (exactly like /total)
+        # 4. Process overbuy adjustments (ONCE ONLY)
         for date in selected_dates:
             if date in overbuy_list:
                 for username, overbuys in overbuy_list[date].items():
-                    if username not in user_totals:
-                        user_totals[username] = {'total': 0, 'power': 0}
+                    if username not in user_reports:
+                        user_reports[username] = {'total': 0, 'power': 0, 'com': com_data.get(username, 0), 'za': za_data.get(username, 80)}
                     
-                    for num, amt in overbuys.items():
-                        user_totals[username]['total'] -= abs(amt)
-                        if date in pnumber_per_date and num == pnumber_per_date[date]:
-                            user_totals[username]['power'] -= abs(amt)
+                    # Subtract overbuy amount ONCE
+                    total_overbuy = sum(overbuys.values())
+                    user_reports[username]['total'] -= total_overbuy
+                    
+                    # Adjust power number if applicable
+                    if date in pnumber_per_date:
+                        power_num = pnumber_per_date[date]
+                        power_overbuy = sum(amt for num, amt in overbuys.items() if num == power_num)
+                        user_reports[username]['power'] -= power_overbuy
 
-        # 5. Generate report (identical to /total format)
+        # 5. Generate report
         msg = [f"📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
         msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
         
@@ -1333,22 +1337,20 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         grand_power = 0
         grand_net = 0
 
-        for username, data in user_totals.items():
-            com = com_data.get(username, 0)
-            za = za_data.get(username, 80)
-            commission = (data['total'] * com) // 100
-            after_com = data['total'] - commission
-            win_amount = data['power'] * za
+        for username, data in user_reports.items():
+            com_amount = (data['total'] * data['com']) // 100
+            after_com = data['total'] - com_amount
+            win_amount = data['power'] * data['za']
             net = after_com - win_amount
             
             msg.append(f"👤 {username}")
             msg.append(f"💵 စုစုပေါင်း: {data['total']}")
-            msg.append(f"📊 Com({com}%) ➤ {commission}")
+            msg.append(f"📊 Com({data['com']}%) ➤ {com_amount}")
             msg.append(f"💰 Com ပြီး: {after_com}")
             
             if data['power'] != 0:
                 msg.append(f"🔢 Power Number ➤ {data['power']}")
-                msg.append(f"🎯 Za({za}) ➤ {win_amount}")
+                msg.append(f"🎯 Za({data['za']}) ➤ {win_amount}")
                 
             status = "ဒိုင်ကပေးရမည်" if net < 0 else "ဒိုင်ကရမည်"
             msg.append(f"📈 ရလဒ်: {abs(net)} ({status})")
@@ -1369,7 +1371,7 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             overall_status = "ဒိုင်အရှုံး" if grand_net < 0 else "ဒိုင်အမြတ်"
             msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(grand_net)} ({overall_status})")
 
-            # Handle long messages
+            # Split long messages
             full_msg = "\n".join(msg)
             if len(full_msg) > 4000:
                 half = len(msg)//2
@@ -1383,7 +1385,6 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in dateall_view: {str(e)}")
         await query.edit_message_text("❌ အချက်အလက်များကိုတွက်ချက်ရာတွင် အမှားတစ်ခုဖြစ်နေပါသည်")
-
 
 async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
