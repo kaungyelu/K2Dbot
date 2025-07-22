@@ -1731,7 +1731,7 @@ if __name__ == "__main__":
         
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Command handlers (မူရင်းအတိုင်း)
+    # Command handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", show_menu))
     app.add_handler(CommandHandler("dateopen", dateopen))
@@ -1750,7 +1750,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("Cdate", change_working_date))
     app.add_handler(CommandHandler("Ddate", delete_date))
 
-    # Callback handlers (မူရင်းအတိုင်း)
+    # Callback handlers
     app.add_handler(CallbackQueryHandler(comza_input, pattern=r"^comza:"))
     app.add_handler(CallbackQueryHandler(delete_bet, pattern=r"^delete:"))
     app.add_handler(CallbackQueryHandler(confirm_delete, pattern=r"^confirm_delete:"))
@@ -1763,7 +1763,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
     app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
     
-    # Calendar handlers (မူရင်းအတိုင်း)
+    # Calendar handlers
     app.add_handler(CallbackQueryHandler(show_calendar, pattern=r"^cdate_calendar$"))
     app.add_handler(CallbackQueryHandler(handle_day_selection, pattern=r"^cdate_day:"))
     app.add_handler(CallbackQueryHandler(set_am, pattern=r"^cdate_am$"))
@@ -1776,24 +1776,12 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(datedelete_toggle, pattern=r"^datedelete_toggle:"))
     app.add_handler(CallbackQueryHandler(datedelete_confirm, pattern=r"^datedelete_confirm$"))
 
-    # Message handlers - အစဉ်လိုက်ပြင်ဆင်ထားသော ဗားရှင်း
-    # 1. Menu selections အတွက် (မြန်မာစာသာ ပါတဲ့ message တွေကို အရင် စစ်ပါ)
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex(r'^[\u1000-\u109F\s]+$'), 
-        handle_menu_selection
+    # Message handlers
+    app.add_handler(MessageHandler filters.TEXT & ~filters.COMMAND & filters.Regex(r'^[\u1000-\u109F\s]+$'), 
+    handle_menu_selection
     ))
-    
-    # 2. Com/Za data input အတွက် (ဂဏန်းနဲ့ / ပါတဲ့ format)
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+/\d+$'), 
-        comza_text
-    ))
-    
-    # 3. ကျန်တဲ့ message တွေအတွက် (ဂဏန်းလောင်းကြေးထည့်သွင်းမှု)
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        handle_message
-    ))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("🚀 Bot is starting...")
     app.run_polling()
