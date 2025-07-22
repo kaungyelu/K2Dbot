@@ -68,21 +68,76 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     if update.effective_user.id == admin_id:
         keyboard = [
-            ["/dateopen", "/dateclose"],
-            ["/ledger", "/break"],
-            ["/overbuy", "/pnumber"],
-            ["/comandza", "/total"],
-            ["/tsent", "/alldata"],
-            ["/reset", "/posthis", "/dateall"],
-            ["/Cdate", "/Ddate"]
+            ["အရောင်းဖွင့်ရန်", "အရောင်းပိတ်ရန်"],
+            ["လည်ချာ", "ဘရိတ်သတ်မှတ်ရန်"],
+            ["လျှံဂဏန်းများဝယ်ရန်", "ပေါက်သီးထည့်ရန်"],
+            ["ကော်နှင့်အဆ သတ်မှတ်ရန်", "လက်ရှိအချိန်မှစုစုပေါင်း"],
+            ["ဂဏန်းနှင့်ငွေပေါင်း", "ကော်မရှင်များ"],
+            ["ရက်အကုန်မှDataများဖျက်ရန်", "တစ်ယောက်ခြင်းစာရင်း"],
+            ["ရက်အလိုက်စာရင်းစုစုပေါင်း"],
+            ["Calendar 🗓️", "ရက်အလိုက်ဖျက်ရန်"]
         ]
     else:
         keyboard = [
-            ["/posthis"]
+            ["တစ်ယောက်ခြင်းစာရင်း"]
         ]
     
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("မီနူးကိုရွေးချယ်ပါ", reply_markup=reply_markup)
+
+async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    command_map = {
+        "အရောင်းဖွင့်ရန်": "/dateopen",
+        "အရောင်းပိတ်ရန်": "/dateclose",
+        "လည်ချာ": "/ledger",
+        "ဘရိတ်သတ်မှတ်ရန်": "/break",
+        "လျှံဂဏန်းများဝယ်ရန်": "/overbuy",
+        "ပေါက်သီးထည့်ရန်": "/pnumber",
+        "ကော်နှင့်အဆ သတ်မှတ်ရန်": "/comandza",
+        "လက်ရှိအချိန်မှစုစုပေါင်း": "/total",
+        "ဂဏန်းနှင့်ငွေပေါင်း": "/tsent",
+        "ကော်မရှင်များ": "/alldata",
+        "ရက်အကုန်မှDataများဖျက်ရန်": "/reset",
+        "တစ်ယောက်ခြင်းစာရင်း": "/posthis",
+        "ရက်အလိုက်စာရင်းစုစုပေါင်း": "/dateall",
+        "Calendar 🗓️": "/Cdate",
+        "ရက်အလိုက်ဖျက်ရန်": "/Ddate"
+    }
+    
+    if text in command_map:
+        command = command_map[text]
+        # Call the appropriate handler based on the command
+        if command == "/dateopen":
+            await dateopen(update, context)
+        elif command == "/dateclose":
+            await dateclose(update, context)
+        elif command == "/ledger":
+            await ledger_summary(update, context)
+        elif command == "/break":
+            await break_command(update, context)
+        elif command == "/overbuy":
+            await overbuy(update, context)
+        elif command == "/pnumber":
+            await pnumber(update, context)
+        elif command == "/comandza":
+            await comandza(update, context)
+        elif command == "/total":
+            await total(update, context)
+        elif command == "/tsent":
+            await tsent(update, context)
+        elif command == "/alldata":
+            await alldata(update, context)
+        elif command == "/reset":
+            await reset_data(update, context)
+        elif command == "/posthis":
+            await posthis(update, context)
+        elif command == "/dateall":
+            await dateall(update, context)
+        elif command == "/Cdate":
+            await change_working_date(update, context)
+        elif command == "/Ddate":
+            await delete_date(update, context)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, current_working_date
@@ -1723,6 +1778,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(datedelete_confirm, pattern=r"^datedelete_confirm$"))
 
     # Message handlers
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_selection))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
