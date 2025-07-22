@@ -1208,149 +1208,121 @@ async def posthis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in posthis_callback: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
-
 async def dateall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
-            
-        # Get all unique dates from user_data
-        all_dates = get_available_dates()
-        
-        if not all_dates:
+
+        # ရွေးချယ်နိုင်သော ရက်များကိုပြမည်
+        available_dates = get_available_dates()
+        if not available_dates:
             await update.message.reply_text("ℹ️ မည်သည့်စာရင်းမှ မရှိသေးပါ")
             return
-            
-        # Initialize selection dictionary
-        dateall_selections = {date: False for date in all_dates}
-        context.user_data['dateall_selections'] = dateall_selections
-        
-        # Build message with checkboxes
-        msg = ["📅 စာရင်းရှိသည့်နေ့ရက်များကို ရွေးချယ်ပါ:"]
+
+        # ရက်များကို checkbox နဲ့ပြမည်
+        msg = ["📅 စုစုပေါင်းရလဒ်ကြည့်ရန် ရက်များရွေးပါ:"]
         buttons = []
         
-        for date in all_dates:
+        for date in available_dates:
             pnum = pnumber_per_date.get(date, None)
-            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
-            
-            is_selected = dateall_selections[date]
-            button_text = f"{date}{pnum_str} {'✅' if is_selected else '⬜'}"
-            buttons.append([InlineKeyboardButton(button_text, callback_data=f"dateall_toggle:{date}")])
-        
-        buttons.append([InlineKeyboardButton("👁‍🗨 View", callback_data="dateall_view")])
+            pnum_str = f" [P: {pnum:02d}]" if pnum else ""
+            buttons.append([InlineKeyboardButton(
+                f"{date}{pnum_str} {'✅' if date in context.user_data.get('selected_dates', []) else '⬜'}",
+                callback_data=f"toggle_date:{date}"
+            )])
+
+        buttons.append([InlineKeyboardButton("👁‍🗨 စုစုပေါင်းကြည့်ရန်", callback_data="calculate_total")])
         reply_markup = InlineKeyboardMarkup(buttons)
         
         await update.message.reply_text("\n".join(msg), reply_markup=reply_markup)
-        
+
     except Exception as e:
         logger.error(f"Error in dateall: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
-async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def toggle_date_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     try:
-        _, date_key = query.data.split(':')
-        dateall_selections = context.user_data.get('dateall_selections', {})
+        _, date = query.data.split(':')
+        selected_dates = context.user_data.get('selected_dates', [])
         
-        if date_key not in dateall_selections:
-            await query.edit_message_text("❌ Error: Date not found")
-            return
-            
-        # Toggle selection status
-        dateall_selections[date_key] = not dateall_selections[date_key]
-        context.user_data['dateall_selections'] = dateall_selections
+        if date in selected_dates:
+            selected_dates.remove(date)
+        else:
+            selected_dates.append(date)
         
-        # Rebuild the message with updated selections
-        msg = ["📅 စာရင်းရှိသည့်နေ့ရက်များကို ရွေးချယ်ပါ:"]
-        buttons = []
-        
-        for date in dateall_selections.keys():
-            pnum = pnumber_per_date.get(date, None)
-            pnum_str = f" [P: {pnum:02d}]" if pnum is not None else ""
-            
-            is_selected = dateall_selections[date]
-            button_text = f"{date}{pnum_str} {'✅' if is_selected else '⬜'}"
-            buttons.append([InlineKeyboardButton(button_text, callback_data=f"dateall_toggle:{date}")])
-        
-        buttons.append([InlineKeyboardButton("👁‍🗨 View", callback_data="dateall_view")])
-        reply_markup = InlineKeyboardMarkup(buttons)
-        
-        await query.edit_message_text("\n".join(msg), reply_markup=reply_markup)
+        context.user_data['selected_dates'] = selected_dates
+        await dateall(update, context)  # Refresh the list
         
     except Exception as e:
-        logger.error(f"Error in dateall_toggle: {str(e)}")
-        await query.edit_message_text("❌ Error occurred")
-async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logger.error(f"Error in toggle_date_selection: {str(e)}")
+        await query.edit_message_text("❌ Error toggling date")
+
+
+async def calculate_dateall_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     try:
-        # 1. Get selected dates
-        dateall_selections = context.user_data.get('dateall_selections', {})
-        selected_dates = [date for date, selected in dateall_selections.items() if selected]
-        
+        selected_dates = context.user_data.get('selected_dates', [])
         if not selected_dates:
-            await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
+            await query.edit_message_text("⚠️ ရက်မရွေးထားပါ")
             return
 
-        # 2. Initialize data storage
-        user_reports = {}  # {username: {'total': x, 'power': y, 'com': z, 'za': a}}
+        # အောက်ပါလုပ်ဆောင်ချက်ကို /total နဲ့အတူတူပဲဖြစ်အောင်လုပ်ထားသည်
+        msg = ["📊 ရွေးထားသောရက်များ၏ စုစုပေါင်းရလဒ်:"]
+        user_totals = {}  # {username: {'total': x, 'power': y, 'com': z, 'za': a}}
         
-        # 3. Process normal bets
+        # (1) ပုံမှန်လောင်းကြေးများကိုစုစည်းခြင်း
         for username, user_dates in user_data.items():
             for date in selected_dates:
                 if date in user_dates:
-                    if username not in user_reports:
-                        user_reports[username] = {'total': 0, 'power': 0, 'com': com_data.get(username, 0), 'za': za_data.get(username, 80)}
+                    if username not in user_totals:
+                        user_totals[username] = {'total': 0, 'power': 0}
                     
                     for num, amt in user_dates[date]:
-                        user_reports[username]['total'] += amt
+                        user_totals[username]['total'] += amt
                         if date in pnumber_per_date and num == pnumber_per_date[date]:
-                            user_reports[username]['power'] += amt
+                            user_totals[username]['power'] += amt
 
-        # 4. Process overbuy adjustments (ONCE ONLY)
+        # (2) Overbuy ကိုနုတ်ခြင်း
         for date in selected_dates:
             if date in overbuy_list:
                 for username, overbuys in overbuy_list[date].items():
-                    if username not in user_reports:
-                        user_reports[username] = {'total': 0, 'power': 0, 'com': com_data.get(username, 0), 'za': za_data.get(username, 80)}
+                    if username not in user_totals:
+                        user_totals[username] = {'total': 0, 'power': 0}
                     
-                    # Subtract overbuy amount ONCE
-                    total_overbuy = sum(overbuys.values())
-                    user_reports[username]['total'] -= total_overbuy
-                    
-                    # Adjust power number if applicable
-                    if date in pnumber_per_date:
-                        power_num = pnumber_per_date[date]
-                        power_overbuy = sum(amt for num, amt in overbuys.items() if num == power_num)
-                        user_reports[username]['power'] -= power_overbuy
+                    for num, amt in overbuys.items():
+                        user_totals[username]['total'] -= abs(amt)
+                        if date in pnumber_per_date and num == pnumber_per_date[date]:
+                            user_totals[username]['power'] -= abs(amt)
 
-        # 5. Generate report
-        msg = [f"📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
-        msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
-        
+        # (3) Com/Za နှင့်တွက်ချက်ခြင်း
         grand_total = 0
         grand_power = 0
         grand_net = 0
-
-        for username, data in user_reports.items():
-            com_amount = (data['total'] * data['com']) // 100
-            after_com = data['total'] - com_amount
-            win_amount = data['power'] * data['za']
+        
+        for username, data in user_totals.items():
+            com = com_data.get(username, 0)
+            za = za_data.get(username, 80)
+            commission = (data['total'] * com) // 100
+            after_com = data['total'] - commission
+            win_amount = data['power'] * za
             net = after_com - win_amount
             
-            msg.append(f"👤 {username}")
+            msg.append(f"\n👤 {username}")
             msg.append(f"💵 စုစုပေါင်း: {data['total']}")
-            msg.append(f"📊 Com({data['com']}%) ➤ {com_amount}")
+            msg.append(f"📊 Com({com}%) ➤ {commission}")
             msg.append(f"💰 Com ပြီး: {after_com}")
             
             if data['power'] != 0:
                 msg.append(f"🔢 Power Number ➤ {data['power']}")
-                msg.append(f"🎯 Za({data['za']}) ➤ {win_amount}")
+                msg.append(f"🎯 Za({za}) ➤ {win_amount}")
                 
             status = "ဒိုင်ကပေးရမည်" if net < 0 else "ဒိုင်ကရမည်"
             msg.append(f"📈 ရလဒ်: {abs(net)} ({status})")
@@ -1360,31 +1332,29 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             grand_power += data['power']
             grand_net += net
 
-        # 6. Add grand totals
-        if len(msg) > 2:
-            msg.append("\n📊 စုစုပေါင်း:")
-            msg.append(f"💵 လောင်းကြေးစုစုပေါင်း: {grand_total}")
+        # (4) စုစုပေါင်းရလဒ်
+        msg.append("\n📊 စုစုပေါင်း:")
+        msg.append(f"💵 လောင်းကြေးစုစုပေါင်း: {grand_total}")
+        
+        if grand_power != 0:
+            msg.append(f"🔴 Power Number စုစုပေါင်း: {grand_power}")
             
-            if grand_power != 0:
-                msg.append(f"🔴 Power Number စုစုပေါင်း: {grand_power}")
-                
-            overall_status = "ဒိုင်အရှုံး" if grand_net < 0 else "ဒိုင်အမြတ်"
-            msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(grand_net)} ({overall_status})")
+        overall_status = "ဒိုင်အရှုံး" if grand_net < 0 else "ဒိုင်အမြတ်"
+        msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(grand_net)} ({overall_status})")
 
-            # Split long messages
-            full_msg = "\n".join(msg)
-            if len(full_msg) > 4000:
-                half = len(msg)//2
-                await query.edit_message_text("\n".join(msg[:half]))
-                await context.bot.send_message(chat_id=query.message.chat_id, text="\n".join(msg[half:]))
-            else:
-                await query.edit_message_text(full_msg)
+        # (5) ရလဒ်ကိုပြသခြင်း
+        full_msg = "\n".join(msg)
+        if len(full_msg) > 4000:  # Telegram message limit
+            half = len(msg) // 2
+            await query.edit_message_text("\n".join(msg[:half]))
+            await context.bot.send_message(chat_id=query.message.chat_id, text="\n".join(msg[half:]))
         else:
-            await query.edit_message_text("ℹ️ ရွေးချယ်ထားသော နေ့ရက်များတွင် ဒေတာမရှိပါ")
+            await query.edit_message_text(full_msg)
 
     except Exception as e:
-        logger.error(f"Error in dateall_view: {str(e)}")
-        await query.edit_message_text("❌ အချက်အလက်များကိုတွက်ချက်ရာတွင် အမှားတစ်ခုဖြစ်နေပါသည်")
+        logger.error(f"Error in calculate_dateall_total: {str(e)}")
+        await query.edit_message_text("❌ တွက်ချက်ရာတွင် အမှားတစ်ခုဖြစ်နေပါသည်")
+
 
 async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
@@ -1718,9 +1688,8 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(overbuy_unselect_all, pattern=r"^overbuy_unselect_all$"))
     app.add_handler(CallbackQueryHandler(overbuy_confirm, pattern=r"^overbuy_confirm$"))
     app.add_handler(CallbackQueryHandler(posthis_callback, pattern=r"^posthis:"))
-    app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
-    app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
-    
+    app.add_handler(CallbackQueryHandler(toggle_date_selection, pattern=r"^toggle_date:"))
+    app.add_handler(CallbackQueryHandler(calculate_dateall_total, pattern=r"^calculate_total$"))
     # Calendar handlers
     app.add_handler(CallbackQueryHandler(show_calendar, pattern=r"^cdate_calendar$"))
     app.add_handler(CallbackQueryHandler(handle_day_selection, pattern=r"^cdate_day:"))
