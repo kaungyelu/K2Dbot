@@ -75,7 +75,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["ဂဏန်းနှင့်ငွေပေါင်း", "ကော်မရှင်များ"],
             ["ရက်အကုန်မှDataများဖျက်ရန်", "တစ်ယောက်ခြင်းစာရင်း"],
             ["ရက်အလိုက်စာရင်းစုစုပေါင်း"],
-            ["Calendar 🗓️", "ရက်အလိုက်ဖျက်ရန်"]
+            ["ရက်ချိန်းရန်", "ရက်အလိုက်ဖျက်ရန်"]
         ]
     else:
         keyboard = [
@@ -101,7 +101,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         "ရက်အကုန်မှDataများဖျက်ရန်": "/reset",
         "တစ်ယောက်ခြင်းစာရင်း": "/posthis",
         "ရက်အလိုက်စာရင်းစုစုပေါင်း": "/dateall",
-        "Calendar 🗓️": "/Cdate",
+        "ရက်ချိန်းရန်": "/Cdate",
         "ရက်အလိုက်ဖျက်ရန်": "/Ddate"
     }
     
@@ -386,7 +386,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     total_amount += amount
 
         if not all_bets:
-            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000, 12/34r1000, 12/34/56-1500")
+            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500")
             return
 
         # Update data stores
