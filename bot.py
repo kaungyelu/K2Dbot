@@ -1284,7 +1284,7 @@ async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in dateall_toggle: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
-        
+
 async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1297,73 +1297,156 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
             return
             
-        # ရက်အလိုက် စုစုပေါင်းတွက်ချက်မှု
-        date_reports = []
-        grand_total = 0
-        grand_power = 0
-        grand_net = 0
+        # Group data by username across all selected dates
+        user_reports = {}
+        total_bets = 0
+        total_power = 0
+        total_net = 0
 
+        # Process regular users
+        for username in user_data:
+            user_total = 0
+            user_power = 0
+            
+            for date in selected_dates:
+                if date in user_data[username]:
+                    for num, amt in user_data[username][date]:
+                        user_total += amt
+                        if date in pnumber_per_date and num == pnumber_per_date[date]:
+                            user_power += amt
+            
+            if user_total > 0:
+                com = com_data.get(username, 0)
+                za = za_data.get(username, 80)
+                
+                commission = (user_total * com) // 100
+                after_com = user_total - commission
+                win_amount = user_power * za
+                net = after_com - win_amount
+                
+                if username in user_reports:
+                    # Combine with existing report if same username
+                    existing = user_reports[username]
+                    existing['total'] += user_total
+                    existing['commission'] += commission
+                    existing['after_com'] += after_com
+                    existing['power_total'] += user_power
+                    existing['win_amount'] += win_amount
+                    existing['net'] += net
+                else:
+                    user_reports[username] = {
+                        'username': username,
+                        'total': user_total,
+                        'commission': commission,
+                        'after_com': after_com,
+                        'power_total': user_power,
+                        'win_amount': win_amount,
+                        'net': net,
+                        'is_overbuy': False
+                    }
+                
+                total_bets += user_total
+                total_power += user_power
+                total_net += net
+
+        # Process overbuy users
         for date in selected_dates:
-            pnum = pnumber_per_date.get(date, None)
-            date_msg = f"\n📅 {date} {'[P:'+str(pnum)+']' if pnum else ''}"
-            date_total = 0
-            date_power = 0
-
-            # ပုံမှန်စာရင်း (user_data)
-            for user in user_data:
-                if date in user_data[user]:
-                    user_total = sum(amt for num, amt in user_data[user][date])
-                    user_power = sum(amt for num, amt in user_data[user][date] if num == pnum) if pnum else 0
-                    date_total += user_total
-                    date_power += user_power
-
-            # Overbuy စာရင်း (overbuy_list)
             if date in overbuy_list:
-                for user in overbuy_list[date]:
-                    overbuy_total = sum(abs(amt) for amt in overbuy_list[date][user].values())
-                    overbuy_power = sum(abs(amt) for num, amt in overbuy_list[date][user].items() if num == pnum) if pnum else 0
-                    date_total -= overbuy_total  # Overbuy ကို အနုတ်ငွေအနေနဲ့တွက်
-                    date_power -= overbuy_power
+                for username, overbuys in overbuy_list[date].items():
+                    user_total = 0
+                    user_power = 0
+                    
+                    for num, amt in overbuys.items():
+                        user_total += abs(amt)
+                        if date in pnumber_per_date and num == pnumber_per_date[date]:
+                            user_power += abs(amt)
+                    
+                    if user_total > 0:
+                        com = com_data.get(username, 0)
+                        za = za_data.get(username, 80)
+                        
+                        commission = (user_total * com) // 100
+                        after_com = user_total - commission
+                        win_amount = user_power * za
+                        net = after_com - win_amount
+                        
+                        if username in user_reports:
+                            # Combine with existing report if same username
+                            existing = user_reports[username]
+                            existing['total'] -= user_total
+                            existing['commission'] -= commission
+                            existing['after_com'] -= after_com
+                            existing['power_total'] -= user_power
+                            existing['win_amount'] -= win_amount
+                            existing['net'] += net
+                        else:
+                            user_reports[username] = {
+                                'username': username,
+                                'total': -user_total,
+                                'commission': -commission,
+                                'after_com': -after_com,
+                                'power_total': -user_power,
+                                'win_amount': -win_amount,
+                                'net': net,
+                                'is_overbuy': True
+                            }
+                        
+                        total_bets -= user_total
+                        total_power -= user_power
+                        total_net += net
 
-            # Com/Za တွက်ချက်မှု
-            date_com = 0
-            date_za = 0
-            for user in user_data:
-                if date in user_data[user]:
-                    com = com_data.get(user, 0)
-                    za = za_data.get(user, 80)
-                    user_total = sum(amt for num, amt in user_data[user][date])
-                    user_power = sum(amt for num, amt in user_data[user][date] if num == pnum) if pnum else 0
-                    date_com += (user_total * com) // 100
-                    date_za += user_power * za
+        # Build the report message
+        msg = [f"📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
+        msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
+        
+        for report in user_reports.values():
+            if report['is_overbuy']:
+                msg.append(f"👤 {report['username']} (overbuy အမည်)")
+            else:
+                msg.append(f"👤 {report['username']}:")
+            
+            msg.append(f"💵 စုစုပေါင်း: {report['total']}")
+            msg.append(f"📊 Com({com_data.get(report['username'], 0)}%) ➤ {report['commission']}")
+            msg.append(f"💰 Com ပြီး: {report['after_com']}")
+            
+            if report['power_total'] != 0:
+                msg.append(f"🔢 Power Number စုစုပေါင်း: {report['power_total']}")
+                msg.append(f"🎯 Za({za_data.get(report['username'], 80}) ➤ {report['win_amount']}")
+            
+            status = "ဒိုင်ကပေးရမည်" if report['net'] < 0 else "ဒိုင်ကရမည်"
+            msg.append(f"📈 ရလဒ်: {abs(report['net'])} ({status})")
+            msg.append("-----------------")
 
-            date_net = (date_total - date_com) - date_za
-            date_reports.append(
-                f"{date_msg}\n"
-                f"💵 စုစုပေါင်း: {date_total}\n"
-                f"🔴 Power: {date_power}\n"
-                f"📊 Com: {date_com}\n"
-                f"🎯 Za: {date_za}\n"
-                f"📈 Net: {date_net} ({'ဒိုင်အမြတ်' if date_net >=0 else 'ဒိုင်အရှုံး'})"
-            )
-            grand_total += date_total
-            grand_power += date_power
-            grand_net += date_net
+        # Add totals
+        msg.append("\n📊 စုစုပေါင်း:")
+        msg.append(f"💵 လောင်းကြေးစုစုပေါင်း: {total_bets}")
+        
+        if total_power != 0:
+            msg.append(f"🔴 Power Number စုစုပေါင်း: {total_power}")
+        
+        overall_status = "ဒိုင်အရှုံး" if total_net < 0 else "ဒိုင်အမြတ်"
+        msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(total_net)} ({overall_status})")
 
-        # စုစုပေါင်းရလဒ်
-        final_report = (
-            "📊 ရက်အလိုက်စုစုပေါင်းရလဒ်:\n" +
-            "\n".join(date_reports) +
-            f"\n\n📌 စုစုပေါင်း:\n"
-            f"💵 ငွေစုစုပေါင်း: {grand_total}\n"
-            f"🔴 Power စုစုပေါင်း: {grand_power}\n"
-            f"📈 ရလဒ်: {grand_net} ({'ဒိုင်အမြတ်' if grand_net >=0 else 'ဒိုင်အရှုံး'})"
-        )
-        await query.edit_message_text(final_report)
+        # Split long messages to avoid Telegram limits
+        max_length = 4000
+        current_msg = []
+        current_len = 0
+        
+        for line in msg:
+            line_len = len(line) + 1
+            if current_len + line_len > max_length:
+                await context.bot.send_message(chat_id=query.message.chat_id, text="\n".join(current_msg))
+                current_msg = []
+                current_len = 0
+            current_msg.append(line)
+            current_len += line_len
+        
+        if current_msg:
+            await query.edit_message_text("\n".join(current_msg))
         
     except Exception as e:
         logger.error(f"Error in dateall_view: {str(e)}")
-        await query.edit_message_text("❌ Error: ဒေတာတွက်ချက်ရာတွင် အမှားတစ်ခုဖြစ်နေသည်။")
+        await query.edit_message_text("❌ Error occurred")
 
 async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
