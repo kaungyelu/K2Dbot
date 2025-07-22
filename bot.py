@@ -1284,150 +1284,96 @@ async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in dateall_toggle: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
-
 async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     try:
+        # 1. ရွေးချယ်ထားသော နေ့ရက်များကိုရယူ
         dateall_selections = context.user_data.get('dateall_selections', {})
         selected_dates = [date for date, selected in dateall_selections.items() if selected]
         
         if not selected_dates:
             await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
             return
-            
-        user_reports = []
+
+        # 2. စာရင်းများအတွက် ပြင်ဆင်ခြင်း
+        msg = [f"📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
+        msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
+        
         total_bets = 0
         total_power = 0
         total_net = 0
 
-        # ရိုးရိုး user များအတွက် တွက်ချက်ခြင်း
+        # 3. User တစ်ဦးချင်းစီအတွက် တွက်ချက်မှု
         for user in user_data:
             user_total = 0
             user_power = 0
             
             for date in selected_dates:
+                # သာမန် user data များ
                 if date in user_data[user]:
                     for num, amt in user_data[user][date]:
                         user_total += amt
-                        if date in pnumber_per_date and num == pnumber_per_date[date]:
+                        if num == pnumber_per_date.get(date):
                             user_power += amt
-            
-            if user_total > 0:
-                com = com_data.get(user, 0)
-                za = za_data.get(user, 80)  # Default Za 80
                 
+                # Overbuy data (အနုတ်ဖြင့်ပေါင်းထည့်)
+                if date in overbuy_list and user in overbuy_list[date]:
+                    for num, amt in overbuy_list[date][user].items():
+                        user_total -= abs(amt)
+                        if num == pnumber_per_date.get(date):
+                            user_power -= abs(amt)
+            
+            # 4. Report ထုတ်ခြင်း (Overbuy ကို သီးသန့်မဖော်ပြ)
+            if user_total != 0:
+                com = com_data.get(user, 0)
+                za = za_data.get(user, 80)
                 commission = (user_total * com) // 100
                 after_com = user_total - commission
                 win_amount = user_power * za
                 net = after_com - win_amount
+                status = "ဒိုင်ကပေးရမည်" if net < 0 else "ဒိုင်ကရမည်"
                 
-                user_reports.append({
-                    'username': user,
-                    'total': user_total,
-                    'commission': commission,
-                    'after_com': after_com,
-                    'power_total': user_power,
-                    'win_amount': win_amount,
-                    'net': net,
-                    'is_overbuy': False
-                })
+                msg.append(f"👤 {user}")
+                msg.append(f"💵 စုစုပေါင်း: {user_total}")
+                msg.append(f"📊 Com({com}%) ➤ {commission}")
+                msg.append(f"💰 Com ပြီး: {after_com}")
+                if user_power != 0:
+                    msg.append(f"🔢 Power Number ➤ {user_power}")
+                    msg.append(f"🎯 Za({za}) ➤ {win_amount}")
+                msg.append(f"📈 ရလဒ်: {abs(net)} ({status})")
+                msg.append("-----------------")
                 
                 total_bets += user_total
                 total_power += user_power
                 total_net += net
 
-        # Overbuy user များအတွက် တွက်ချက်ခြင်း
-        for date in selected_dates:
-            if date in overbuy_list:
-                for user, overbuys in overbuy_list[date].items():
-                    user_total = 0
-                    user_power = 0
-                    
-                    for num, amt in overbuys.items():
-                        user_total += abs(amt)
-                        if date in pnumber_per_date and num == pnumber_per_date[date]:
-                            user_power += abs(amt)
-                    
-                    if user_total > 0:
-                        com = com_data.get(user, 0)
-                        za = za_data.get(user, 80)
-                        
-                        commission = (user_total * com) // 100
-                        after_com = user_total - commission
-                        win_amount = user_power * za
-                        net = after_com - win_amount
-                        
-                        user_reports.append({
-                            'username': user,
-                            'total': -user_total,  # Overbuy ဖြစ်ကြောင်း ပြသရန် -
-                            'commission': -commission,
-                            'after_com': -after_com,
-                            'power_total': -user_power,
-                            'win_amount': -win_amount,
-                            'net': net,
-                            'is_overbuy': True
-                        })
-                        
-                        total_bets -= user_total
-                        total_power -= user_power
-                        total_net += net
-
-        # အစီရင်ခံစာတည်ဆောက်ခြင်း
-        msg = [f"📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
-        msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
-        
-        for report in user_reports:
-            if report['is_overbuy']:
-                msg.append(f"👤 {report['username']}(overbuy အမည်)")
+        # 5. စုစုပေါင်းရလဒ်ထုတ်ခြင်း
+        if len(msg) > 2:  # Header နှင့် date list ပါပြီးသား
+            msg.append("\n📊 စုစုပေါင်း:")
+            msg.append(f"💵 လောင်းကြေးစုစုပေါင်း: {total_bets}")
+            if total_power != 0:
+                msg.append(f"🔴 Power Number စုစုပေါင်း: {total_power}")
+            overall_status = "ဒိုင်အရှုံး" if total_net < 0 else "ဒိုင်အမြတ်"
+            msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(total_net)} ({overall_status})")
+            
+            # Telegram message limit (4000 characters) ကိုဖြတ်ရန်
+            full_message = "\n".join(msg)
+            if len(full_message) > 4000:
+                part1 = "\n".join(msg[:len(msg)//2])
+                part2 = "\n".join(msg[len(msg)//2:])
+                await query.edit_message_text(part1)
+                await context.bot.send_message(chat_id=query.message.chat_id, text=part2)
             else:
-                msg.append(f"👤 {report['username']}:(ရိုးရိုးuser)")
+                await query.edit_message_text(full_message)
+        else:
+            await query.edit_message_text(f"ℹ️ ရွေးချယ်ထားသော နေ့ရက်များတွင် ဒေတာမရှိပါ")
             
-            msg.append(f"💵 စုစုပေါင်း: {report['total']}")
-            msg.append(f"📊 Com({com_data.get(report['username'], 0)}%) ➤ {report['commission']}")
-            msg.append(f"💰 Com ပြီး: {report['after_com']}")
-            
-            if report['power_total'] != 0:
-                msg.append(f"🔢 Power Number စုစုပေါင်း: {report['power_total']}")
-                msg.append(f"🎯 Za({za_data.get(report['username'], 80)}) ➤ {report['win_amount']}")
-            
-            status = "ဒိုင်ကပေးရမည်" if report['net'] < 0 else "ဒိုင်ကရမည်"
-            msg.append(f"📈 ရလဒ်: {abs(report['net'])} ({status})")
-            msg.append("-----------------")
-
-        # စုစုပေါင်းရလဒ်
-        msg.append("\n📊 စုစုပေါင်း:")
-        msg.append(f"💵 လောင်းကြေးစုစုပေါင်း: {total_bets}")
-        
-        if total_power != 0:
-            msg.append(f"🔴 Power Number စုစုပေါင်း: {total_power}")
-        
-        overall_status = "ဒိုင်အရှုံး" if total_net < 0 else "ဒိုင်အမြတ်"
-        msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(total_net)}({overall_status})")
-
-
-             # Telegram message limit ထက်မကျော်အောင် စာပိုဒ်ခွဲပို့ခြင်း
-        max_length = 4000
-        current_msg = []
-        current_len = 0
-        
-        for line in msg:
-            line_len = len(line) + 1
-            if current_len + line_len > max_length:
-                await context.bot.send_message(chat_id=query.message.chat_id, text="\n".join(current_msg))
-                current_msg = []
-                current_len = 0
-            current_msg.append(line)
-            current_len += line_len
-        
-        if current_msg:
-            await query.edit_message_text("\n".join(current_msg))
-        
     except Exception as e:
         logger.error(f"Error in dateall_view: {str(e)}")
-        await query.edit_message_text("❌ Error occurred")
-
+        await query.edit_message_text("❌ Error: အချက်အလက်များကိုတွက်ချက်ရာတွင် အမှားတစ်ခုဖြစ်နေပါသည်")
+        
 async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
     try:
