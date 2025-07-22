@@ -1284,7 +1284,7 @@ async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in dateall_toggle: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
-
+        
 async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1297,91 +1297,74 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
             return
             
-        # ရက်အလိုက် စုစုပေါင်းများ
+        # ရက်အလိုက် စုစုပေါင်းတွက်ချက်မှု
+        date_reports = []
         grand_total = 0
         grand_power = 0
         grand_net = 0
-        reports = []
-        
+
         for date in selected_dates:
-            pnum = pnumber_per_date.get(date)
+            pnum = pnumber_per_date.get(date, None)
+            date_msg = f"\n📅 {date} {'[P:'+str(pnum)+']' if pnum else ''}"
             date_total = 0
             date_power = 0
-            
-            # ရက်တစ်ခုချင်းစီအတွက် စာရင်း
-            date_report = [f"\n📅 {date} {'[P:'+str(pnum)+']' if pnum else ''}"]
-            
-            # 1. ပုံမှန်စာရင်း (user_data)
+
+            # ပုံမှန်စာရင်း (user_data)
             for user in user_data:
                 if date in user_data[user]:
-                    user_total = sum(amt for _, amt in user_data[user][date])
+                    user_total = sum(amt for num, amt in user_data[user][date])
                     user_power = sum(amt for num, amt in user_data[user][date] if num == pnum) if pnum else 0
-                    com = (user_total * com_data.get(user, 0)) // 100
-                    za = user_power * za_data.get(user, 80)
-                    net = (user_total - com) - za
-                    
-                    date_report.append(
-                        f"👤 {user} (ရိုးရိုးuser)\n"
-                        f"💵 စုစုပေါင်း: {user_total}\n"
-                        f"📊 Com({com_data.get(user, 0)}%) ➤ {com}\n"
-                        f"💰 Com ပြီး: {user_total - com}\n"
-                        f"🔢 Power Number ➤ {user_power}\n"
-                        f"🎯 Za({za_data.get(user, 80)}) ➤ {za}\n"
-                        f"📈 ရလဒ်: {abs(net)} ({'ဒိုင်ကရမည်' if net >=0 else 'ဒိုင်ကပေးရမည်'})"
-                    )
                     date_total += user_total
                     date_power += user_power
-                    grand_total += user_total
-                    grand_power += user_power
-                    grand_net += net
-            
-            # 2. Overbuy စာရင်း (overbuy_list)
+
+            # Overbuy စာရင်း (overbuy_list)
             if date in overbuy_list:
                 for user in overbuy_list[date]:
                     overbuy_total = sum(abs(amt) for amt in overbuy_list[date][user].values())
                     overbuy_power = sum(abs(amt) for num, amt in overbuy_list[date][user].items() if num == pnum) if pnum else 0
-                    net = overbuy_total  # Overbuy က ဒိုင်ကပေးရမည် (+အဖြစ်ပြမယ်)
-                    
-                    date_report.append(
-                        f"👤 {user} (overbuy အမည်)\n"
-                        f"💵 စုစုပေါင်း: -{overbuy_total}\n"
-                        f"📊 Com(0%) ➤ 0\n"
-                        f"💰 Com ပြီး: -{overbuy_total}\n"
-                        f"🔢 Power Number ➤ {overbuy_power}\n"
-                        f"🎯 Za(0) ➤ 0\n"
-                        f"📈 ရလဒ်: {overbuy_total} (ဒိုင်ကပေးရမည်)"
-                    )
-                    date_total -= overbuy_total
+                    date_total -= overbuy_total  # Overbuy ကို အနုတ်ငွေအနေနဲ့တွက်
                     date_power -= overbuy_power
-                    grand_total -= overbuy_total
-                    grand_power -= overbuy_power
-                    grand_net += overbuy_total  # Overbuy ကို ဒိုင်အမြတ်အဖြစ်တွက်
-            
-            reports.append("\n".join(date_report))
-        
+
+            # Com/Za တွက်ချက်မှု
+            date_com = 0
+            date_za = 0
+            for user in user_data:
+                if date in user_data[user]:
+                    com = com_data.get(user, 0)
+                    za = za_data.get(user, 80)
+                    user_total = sum(amt for num, amt in user_data[user][date])
+                    user_power = sum(amt for num, amt in user_data[user][date] if num == pnum) if pnum else 0
+                    date_com += (user_total * com) // 100
+                    date_za += user_power * za
+
+            date_net = (date_total - date_com) - date_za
+            date_reports.append(
+                f"{date_msg}\n"
+                f"💵 စုစုပေါင်း: {date_total}\n"
+                f"🔴 Power: {date_power}\n"
+                f"📊 Com: {date_com}\n"
+                f"🎯 Za: {date_za}\n"
+                f"📈 Net: {date_net} ({'ဒိုင်အမြတ်' if date_net >=0 else 'ဒိုင်အရှုံး'})"
+            )
+            grand_total += date_total
+            grand_power += date_power
+            grand_net += date_net
+
         # စုစုပေါင်းရလဒ်
         final_report = (
-            f"📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:\n"
-            f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n"
-            + "\n-----------------\n".join(reports) +
-            f"\n\n📌 ရက်စုစုပေါင်း:\n"
-            f"💵 လောင်းကြေးစုစုပေါင်း: {grand_total}\n"
-            f"🔴 Power Number စုစုပေါင်း: {grand_power}\n"
-            f"📊 စုစုပေါင်းရလဒ်: {abs(grand_net)} "
-            f"({'ဒိုင်အမြတ်' if grand_net >=0 else 'ဒိုင်အရှုံး'})"
+            "📊 ရက်အလိုက်စုစုပေါင်းရလဒ်:\n" +
+            "\n".join(date_reports) +
+            f"\n\n📌 စုစုပေါင်း:\n"
+            f"💵 ငွေစုစုပေါင်း: {grand_total}\n"
+            f"🔴 Power စုစုပေါင်း: {grand_power}\n"
+            f"📈 ရလဒ်: {grand_net} ({'ဒိုင်အမြတ်' if grand_net >=0 else 'ဒိုင်အရှုံး'})"
         )
+        await query.edit_message_text(final_report)
         
-        # Telegram message limit (4000 characters) ကိုဖြတ်ပို့
-        if len(final_report) > 4000:
-            for i in range(0, len(final_report), 4000):
-                await query.message.reply_text(final_report[i:i+4000])
-        else:
-            await query.edit_message_text(final_report)
-            
     except Exception as e:
         logger.error(f"Error in dateall_view: {str(e)}")
         await query.edit_message_text("❌ Error: ဒေတာတွက်ချက်ရာတွင် အမှားတစ်ခုဖြစ်နေသည်။")
-        
+
 async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
     try:
