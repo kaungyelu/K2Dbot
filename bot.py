@@ -1297,62 +1297,51 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
             return
             
-        # Group data by username across all selected dates
-        user_reports = {}
+        user_reports = []
         total_bets = 0
         total_power = 0
         total_net = 0
 
-        # Process regular users
-        for username in user_data:
+        # ရိုးရိုး user များအတွက် တွက်ချက်ခြင်း
+        for user in user_data:
             user_total = 0
             user_power = 0
             
             for date in selected_dates:
-                if date in user_data[username]:
-                    for num, amt in user_data[username][date]:
+                if date in user_data[user]:
+                    for num, amt in user_data[user][date]:
                         user_total += amt
                         if date in pnumber_per_date and num == pnumber_per_date[date]:
                             user_power += amt
             
             if user_total > 0:
-                com = com_data.get(username, 0)
-                za = za_data.get(username, 80)
+                com = com_data.get(user, 0)
+                za = za_data.get(user, 80)  # Default Za 80
                 
                 commission = (user_total * com) // 100
                 after_com = user_total - commission
                 win_amount = user_power * za
                 net = after_com - win_amount
                 
-                if username in user_reports:
-                    # Combine with existing report if same username
-                    existing = user_reports[username]
-                    existing['total'] += user_total
-                    existing['commission'] += commission
-                    existing['after_com'] += after_com
-                    existing['power_total'] += user_power
-                    existing['win_amount'] += win_amount
-                    existing['net'] += net
-                else:
-                    user_reports[username] = {
-                        'username': username,
-                        'total': user_total,
-                        'commission': commission,
-                        'after_com': after_com,
-                        'power_total': user_power,
-                        'win_amount': win_amount,
-                        'net': net,
-                        'is_overbuy': False
-                    }
+                user_reports.append({
+                    'username': user,
+                    'total': user_total,
+                    'commission': commission,
+                    'after_com': after_com,
+                    'power_total': user_power,
+                    'win_amount': win_amount,
+                    'net': net,
+                    'is_overbuy': False
+                })
                 
                 total_bets += user_total
                 total_power += user_power
                 total_net += net
 
-        # Process overbuy users
+        # Overbuy user များအတွက် တွက်ချက်ခြင်း
         for date in selected_dates:
             if date in overbuy_list:
-                for username, overbuys in overbuy_list[date].items():
+                for user, overbuys in overbuy_list[date].items():
                     user_total = 0
                     user_power = 0
                     
@@ -1362,48 +1351,38 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             user_power += abs(amt)
                     
                     if user_total > 0:
-                        com = com_data.get(username, 0)
-                        za = za_data.get(username, 80)
+                        com = com_data.get(user, 0)
+                        za = za_data.get(user, 80)
                         
                         commission = (user_total * com) // 100
                         after_com = user_total - commission
                         win_amount = user_power * za
                         net = after_com - win_amount
                         
-                        if username in user_reports:
-                            # Combine with existing report if same username
-                            existing = user_reports[username]
-                            existing['total'] -= user_total
-                            existing['commission'] -= commission
-                            existing['after_com'] -= after_com
-                            existing['power_total'] -= user_power
-                            existing['win_amount'] -= win_amount
-                            existing['net'] += net
-                        else:
-                            user_reports[username] = {
-                                'username': username,
-                                'total': -user_total,
-                                'commission': -commission,
-                                'after_com': -after_com,
-                                'power_total': -user_power,
-                                'win_amount': -win_amount,
-                                'net': net,
-                                'is_overbuy': True
-                            }
+                        user_reports.append({
+                            'username': user,
+                            'total': -user_total,  # Overbuy ဖြစ်ကြောင်း ပြသရန် -
+                            'commission': -commission,
+                            'after_com': -after_com,
+                            'power_total': -user_power,
+                            'win_amount': -win_amount,
+                            'net': net,
+                            'is_overbuy': True
+                        })
                         
                         total_bets -= user_total
                         total_power -= user_power
                         total_net += net
 
-        # Build the report message
+        # အစီရင်ခံစာတည်ဆောက်ခြင်း
         msg = [f"📊 ရွေးချယ်ထားသည့် နေ့ရက်များ စုပေါင်းရလဒ်:"]
         msg.append(f"📅 နေ့ရက်များ: {', '.join(selected_dates)}\n")
         
-        for report in user_reports.values():
+        for report in user_reports:
             if report['is_overbuy']:
-                msg.append(f"👤 {report['username']} (overbuy အမည်)")
+                msg.append(f"👤 {report['username']}(overbuy အမည်)")
             else:
-                msg.append(f"👤 {report['username']}:")
+                msg.append(f"👤 {report['username']}:(ရိုးရိုးuser)")
             
             msg.append(f"💵 စုစုပေါင်း: {report['total']}")
             msg.append(f"📊 Com({com_data.get(report['username'], 0)}%) ➤ {report['commission']}")
@@ -1411,13 +1390,13 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if report['power_total'] != 0:
                 msg.append(f"🔢 Power Number စုစုပေါင်း: {report['power_total']}")
-                msg.append(f"🎯 Za({za_data.get(report['username'], 80}) ➤ {report['win_amount']}")
+                msg.append(f"🎯 Za({za_data.get(report['username'], 80)}) ➤ {report['win_amount']}")
             
             status = "ဒိုင်ကပေးရမည်" if report['net'] < 0 else "ဒိုင်ကရမည်"
             msg.append(f"📈 ရလဒ်: {abs(report['net'])} ({status})")
             msg.append("-----------------")
 
-        # Add totals
+        # စုစုပေါင်းရလဒ်
         msg.append("\n📊 စုစုပေါင်း:")
         msg.append(f"💵 လောင်းကြေးစုစုပေါင်း: {total_bets}")
         
@@ -1425,9 +1404,10 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg.append(f"🔴 Power Number စုစုပေါင်း: {total_power}")
         
         overall_status = "ဒိုင်အရှုံး" if total_net < 0 else "ဒိုင်အမြတ်"
-        msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(total_net)} ({overall_status})")
+        msg.append(f"📈 စုစုပေါင်းရလဒ်: {abs(total_net)}({overall_status})")
 
-        # Split long messages to avoid Telegram limits
+
+             # Telegram message limit ထက်မကျော်အောင် စာပိုဒ်ခွဲပို့ခြင်း
         max_length = 4000
         current_msg = []
         current_len = 0
