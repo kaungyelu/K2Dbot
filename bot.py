@@ -1777,9 +1777,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(datedelete_confirm, pattern=r"^datedelete_confirm$"))
 
     # Message handlers
-    app.add_handler(MessageHandler filters.TEXT & ~filters.COMMAND & filters.Regex(r'^[\u1000-\u109F\s]+$'), 
-    handle_menu_selection
-    ))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^[\u1000-\u109F\s]+$'), handle_menu_selection))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
