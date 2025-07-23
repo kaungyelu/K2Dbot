@@ -530,7 +530,6 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in cancel_delete: {str(e)}")
         await query.edit_message_text("❌ Error occurred while canceling deletion")
-
 async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, current_working_date
     try:
@@ -545,24 +544,55 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
             return
             
-        lines = [f"📒 {date_key} လက်ကျန်ငွေစာရင်း"]
+        # Prepare ledger data
         ledger_data = ledger[date_key]
+        power_num = pnumber_per_date.get(date_key, None)
         
-        for i in range(100):
-            total = ledger_data.get(i, 0)
-            if total > 0:
-                if date_key in pnumber_per_date and i == pnumber_per_date[date_key]:
-                    lines.append(f"🔴 {i:02d} ➤ {total} 🔴")
-                else:
-                    lines.append(f"{i:02d} ➤ {total}")
+        # Calculate totals
+        total_amount = sum(ledger_data.values())
+        power_amount = ledger_data.get(power_num, 0) if power_num is not None else 0
         
-        if len(lines) == 1:
-            await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
-        else:
-            if date_key in pnumber_per_date:
-                pnum = pnumber_per_date[date_key]
-                lines.append(f"\n🔴 Power Number: {pnum:02d} ➤ {ledger_data.get(pnum, 0)}")
-            await update.message.reply_text("\n".join(lines))
+        # Build the table header
+        header = f"📅 {date_key} - လက်ကျန်ငွေစာရင်း\n\n"
+        
+        # Build the number grid (10x10)
+        grid = []
+        for row in range(10):  # 0-9 rows
+            row_numbers = []
+            for col in range(10):  # 0-9 columns
+                num = col * 10 + row
+                amount = ledger_data.get(num, 0)
+                
+                # Format number with color if it's power number
+                num_str = f"{num:02d}"
+                if num == power_num:
+                    num_str = f"🔴{num_str}🔴"
+                
+                # Format amount (right aligned)
+                amount_str = f"{amount}".rjust(5)
+                
+                # Combine number and amount
+                cell = f"{num_str}:{amount_str}"
+                row_numbers.append(cell)
+            
+            # Join cells in the row with spaces
+            grid_row = " | ".join(row_numbers)
+            grid.append(grid_row)
+        
+        # Combine all rows
+        table = "\n".join(grid)
+        
+        # Build footer with power number and total
+        footer = "\n\n"
+        if power_num is not None:
+            footer += f"🔴 Power Number: {power_num:02d} ({power_amount})\n"
+        footer += f"💰 စုစုပေါင်း: {total_amount}"
+        
+        # Combine all parts
+        message = header + table + footer
+        
+        await update.message.reply_text(f"<pre>{message}</pre>", parse_mode='HTML')
+        
     except Exception as e:
         logger.error(f"Error in ledger: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
