@@ -6,6 +6,7 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, filters
 )
 from datetime import datetime, time, timedelta
+from tabulate import tabulate
 import pytz
 import re
 import calendar
@@ -530,6 +531,8 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in cancel_delete: {str(e)}")
         await query.edit_message_text("❌ Error occurred while canceling deletion")
+
+
 async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, current_working_date
     try:
@@ -537,55 +540,59 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to show
         date_key = current_working_date if current_working_date else get_current_date_key()
         
         if date_key not in ledger:
             await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
             return
             
+        # Prepare ledger data
         ledger_data = ledger[date_key]
         power_num = pnumber_per_date.get(date_key, None)
+        
+        # Calculate totals
         total_amount = sum(ledger_data.values())
         power_amount = ledger_data.get(power_num, 0) if power_num is not None else 0
-
-        # HTML table structure
-        html_table = """
-        <div style="overflow-x: auto;">
-        <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; width: 100%;">
-        """
         
         # Create 10x10 grid
-        for row in range(10):
-            html_table += "<tr>"
-            for col in range(10):
+        grid = []
+        for row in range(10):  # 0-9 rows
+            grid_row = []
+            for col in range(10):  # 0-9 columns
                 num = col * 10 + row
                 amount = ledger_data.get(num, 0)
-                cell_style = "background-color: #ffcccc;" if num == power_num else ""
-                html_table += f'<td style="{cell_style} text-align: center;">{num:02d}<br>{amount}</td>'
-            html_table += "</tr>"
+                
+                # Highlight power number
+                if num == power_num:
+                    grid_row.append(f"[{num:02d}]\n{amount}")
+                else:
+                    grid_row.append(f"{num:02d}\n{amount}")
+            grid.append(grid_row)
         
-        html_table += """
-        </table>
-        </div>
-        """
+        # Create table with tabulate
+        table = tabulate(
+            grid,
+            tablefmt="grid",
+            stralign="center",
+            numalign="center"
+        )
         
-        # Footer information
-        footer = f"""
-        <p>Power Number: {power_num:02d} ({power_amount})</p>
-        <p>စုစုပေါင်း: {total_amount}</p>
-        """
+        # Build the message
+        message = (
+            f"📅 <b>{date_key} - လက်ကျန်ငွေစာရင်း</b>\n\n"
+            f"<pre>{table}</pre>\n\n"
+            f"🔴 <b>Power Number</b>: {power_num:02d} ({power_amount})\n"
+            f"💰 <b>စုစုပေါင်း</b>: {total_amount}"
+        )
         
-        full_message = f"""
-        <b>📅 {date_key} - လက်ကျန်ငွေစာရင်း</b>
-        {html_table}
-        {footer}
-        """
-        
-        await update.message.reply_text(full_message, parse_mode='HTML')
+        await update.message.reply_text(message, parse_mode='HTML')
         
     except Exception as e:
         logger.error(f"Error in ledger: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
 async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, break_limits, current_working_date
     try:
