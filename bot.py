@@ -1284,13 +1284,12 @@ async def dateall_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in dateall_toggle: {str(e)}")
         await query.edit_message_text("❌ Error occurred")
-
 async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     try:
-        # 1. Get selected dates from context
+        # 1. Get selected dates
         dateall_selections = context.user_data.get('dateall_selections', {})
         selected_dates = [date for date, selected in dateall_selections.items() if selected]
         
@@ -1298,104 +1297,60 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("⚠️ မည်သည့်နေ့ရက်ကိုမှ မရွေးချယ်ထားပါ")
             return
 
-        # 2. Initialize data storage for per-user calculation
-        user_reports = {}  # {username: {dates: [], total_bet: 0, total_power: 0, overbuy_adjust: 0}}
+        # 2. Initialize data storage
+        user_reports = {}  # {username: {'total_bet': 0, 'power_bet': 0, 'com': X, 'za': Y}}
         grand_totals = {
             'total_bet': 0,
-            'total_power': 0,
-            'overbuy_adjust': 0,
-            'net_bet': 0,
-            'win_amount': 0
+            'power_bet': 0,
+            'commission': 0,
+            'win_amount': 0,
+            'net_result': 0
         }
 
-        # 3. Process normal bets with overbuy adjustment
+        # 3. Process bets WITHOUT overbuy adjustment
         for username, user_dates in user_data.items():
             if username not in user_reports:
                 user_reports[username] = {
-                    'dates': [],
                     'total_bet': 0,
-                    'total_power': 0,
-                    'overbuy_adjust': 0,
+                    'power_bet': 0,
                     'com': com_data.get(username, 0),
                     'za': za_data.get(username, 80)
                 }
             
             for date_key in selected_dates:
                 if date_key in user_dates:
-                    date_report = {
-                        'date': date_key,
-                        'bets': [],
-                        'power_bet': 0,
-                        'overbuy': 0
-                    }
-                    
-                    # Check if date has break limit
-                    break_limit = break_limits.get(date_key, float('inf'))
-                    pnum = pnumber_per_date.get(date_key, None)
-                    
-                    for num, amt in user_dates[date_key]:
-                        # Track overbuy
-                        if num in ledger.get(date_key, {}) and ledger[date_key][num] > break_limit:
-                            overbuy_amt = ledger[date_key][num] - break_limit
-                            date_report['overbuy'] += overbuy_amt
-                            user_reports[username]['overbuy_adjust'] += overbuy_amt
-                        
-                        # Track power number
-                        if pnum is not None and num == pnum:
-                            date_report['power_bet'] += amt
-                            user_reports[username]['total_power'] += amt
-                        
-                        date_report['bets'].append(f"{num:02d}-{amt}")
-                    
-                    # Update user totals
+                    # Track total bets
                     date_total = sum(amt for _, amt in user_dates[date_key])
                     user_reports[username]['total_bet'] += date_total
-                    user_reports[username]['dates'].append(date_report)
                     
-                    # Update grand totals
-                    grand_totals['total_bet'] += date_total
+                    # Track power number bets
+                    pnum = pnumber_per_date.get(date_key)
                     if pnum is not None:
-                        grand_totals['total_power'] += date_report['power_bet']
+                        power_amt = sum(amt for num, amt in user_dates[date_key] if num == pnum)
+                        user_reports[username]['power_bet'] += power_amt
 
-        # 4. Process overbuy adjustments from overbuy_list
-        for date_key in selected_dates:
-            if date_key in overbuy_list:
-                for username, overbuys in overbuy_list[date_key].items():
-                    if username not in user_reports:
-                        continue
-                        
-                    for num, amt in overbuys.items():
-                        user_reports[username]['overbuy_adjust'] += abs(amt)
-                        if pnumber_per_date.get(date_key) == num:
-                            user_reports[username]['total_power'] -= abs(amt)
-                            grand_totals['total_power'] -= abs(amt)
-
-        # 5. Calculate net values and prepare messages
-        messages = ["📊 ရွေးချယ်ထားသော နေ့ရက်များ စုစုပေါင်းရလဒ် (/total ပုံစံ)"]
+        # 4. Calculate financials
+        messages = ["📊 ရွေးချယ်ထားသော နေ့ရက်များ စုစုပေါင်းရလဒ် (Overbuy မပါ)"]
         messages.append(f"📅 ရက်စွဲများ: {', '.join(selected_dates)}\n")
         
-        # Process each user's report
         for username, report in user_reports.items():
-            # Calculate net values
-            net_bet = report['total_bet'] - report['overbuy_adjust']
-            commission = (net_bet * report['com']) // 100
-            after_com = net_bet - commission
-            win_amount = report['total_power'] * report['za']
+            # Calculate values
+            commission = (report['total_bet'] * report['com']) // 100
+            after_com = report['total_bet'] - commission
+            win_amount = report['power_bet'] * report['za']
             net_result = after_com - win_amount
             
             # Build user message
             user_msg = [
                 f"👤 {username}",
                 f"💵 စုစုပေါင်းလောင်းကြေး: {report['total_bet']}",
-                f"➖ Overbuy နှုတ်ယူငွေ: {report['overbuy_adjust']}",
-                f"📌 Net Bet: {net_bet}",
                 f"📊 Com ({report['com']}%): {commission}",
                 f"💰 Com ပြီး: {after_com}"
             ]
             
-            if report['total_power'] > 0:
+            if report['power_bet'] > 0:
                 user_msg.extend([
-                    f"🔴 Power Number စုစုပေါင်း: {report['total_power']}",
+                    f"🔴 Power Number: {report['power_bet']}",
                     f"🎯 Za ({report['za']}): {win_amount}"
                 ])
             
@@ -1407,27 +1362,27 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             messages.append("⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯")
             
             # Update grand totals
-            grand_totals['overbuy_adjust'] += report['overbuy_adjust']
-            grand_totals['net_bet'] += net_bet
+            grand_totals['total_bet'] += report['total_bet']
+            grand_totals['power_bet'] += report['power_bet']
+            grand_totals['commission'] += commission
             grand_totals['win_amount'] += win_amount
+            grand_totals['net_result'] += net_result
 
-        # 6. Add grand totals
-        grand_net = grand_totals['net_bet'] - grand_totals['win_amount']
+        # 5. Add grand totals
         messages.append("\n📌 စုစုပေါင်းရလဒ်:")
         messages.append(f"💵 စုစုပေါင်းလောင်းကြေး: {grand_totals['total_bet']}")
-        messages.append(f"➖ Overbuy စုစုပေါင်း: {grand_totals['overbuy_adjust']}")
-        messages.append(f"📌 Net Bet စုစုပေါင်း: {grand_totals['net_bet']}")
+        messages.append(f"📊 Com စုစုပေါင်း: {grand_totals['commission']}")
         
-        if grand_totals['total_power'] > 0:
-            messages.append(f"🔴 Power Number စုစုပေါင်း: {grand_totals['total_power']}")
+        if grand_totals['power_bet'] > 0:
+            messages.append(f"🔴 Power Number စုစုပေါင်း: {grand_totals['power_bet']}")
             messages.append(f"🎯 Win Amount စုစုပေါင်း: {grand_totals['win_amount']}")
         
         messages.append(
-            f"📊 စုစုပေါင်းရလဒ်: {abs(grand_net)} "
-            f"({'ဒိုင်အရှုံး' if grand_net < 0 else 'ဒိုင်အမြတ်'})"
+            f"📊 စုစုပေါင်းရလဒ်: {abs(grand_totals['net_result'])} "
+            f"({'ဒိုင်အရှုံး' if grand_totals['net_result'] < 0 else 'ဒိုင်အမြတ်'})"
         )
 
-        # 7. Send the message (split if too long)
+        # 6. Send message (split if too long)
         full_message = "\n".join(messages)
         if len(full_message) > 4000:
             half = len(messages) // 2
@@ -1441,7 +1396,7 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Error in dateall_view: {str(e)}")
-        await query.edit_message_text("❌ အချက်အလက်များကိုတွက်ချက်ရာတွင် အမှားတစ်ခုဖြစ်နေပါသည်")
+        await query.edit_message_text("❌ တွက်ချက်မှုအမှားဖြစ်နေပါသည်")
         
 async def change_working_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
