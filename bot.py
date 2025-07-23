@@ -532,7 +532,6 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in cancel_delete: {str(e)}")
         await query.edit_message_text("❌ Error occurred while canceling deletion")
 
-
 async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, current_working_date
     try:
@@ -547,52 +546,34 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
             return
             
-        # Prepare ledger data
+        lines = [f"📒 {date_key} လက်ကျန်ငွေစာရင်း"]
         ledger_data = ledger[date_key]
-        power_num = pnumber_per_date.get(date_key, None)
         
-        # Calculate totals
-        total_amount = sum(ledger_data.values())
-        power_amount = ledger_data.get(power_num, 0) if power_num is not None else 0
+        total_all_numbers = 0  # စုစုပေါင်းငွေအတွက်
         
-        # Create 10x10 grid
-        grid = []
-        for row in range(10):  # 0-9 rows
-            grid_row = []
-            for col in range(10):  # 0-9 columns
-                num = col * 10 + row
-                amount = ledger_data.get(num, 0)
-                
-                # Highlight power number
-                if num == power_num:
-                    grid_row.append(f"[{num:02d}]\n{amount}")
+        for i in range(100):
+            total = ledger_data.get(i, 0)
+            if total > 0:
+                if date_key in pnumber_per_date and i == pnumber_per_date[date_key]:
+                    lines.append(f"🔴 {i:02d} ➤ {total} 🔴")
                 else:
-                    grid_row.append(f"{num:02d}\n{amount}")
-            grid.append(grid_row)
-        
-        # Create table with tabulate
-        table = tabulate(
-            grid,
-            tablefmt="grid",
-            stralign="center",
-            numalign="center"
-        )
-        
-        # Build the message
-        message = (
-            f"📅 <b>{date_key} - လက်ကျန်ငွေစာရင်း</b>\n\n"
-            f"<pre>{table}</pre>\n\n"
-            f"🔴 <b>Power Number</b>: {power_num:02d} ({power_amount})\n"
-            f"💰 <b>စုစုပေါင်း</b>: {total_amount}"
-        )
-        
-        await update.message.reply_text(message, parse_mode='HTML')
-        
+                    lines.append(f"{i:02d} ➤ {total}")
+                total_all_numbers += total  # စုစုပေါင်းငွေတွက်ရန်
+
+        if len(lines) == 1:
+            await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
+        else:
+            if date_key in pnumber_per_date:
+                pnum = pnumber_per_date[date_key]
+                lines.append(f"\n🔴 Power Number: {pnum:02d} ➤ {ledger_data.get(pnum, 0)}")
+            
+            # စုစုပေါင်းငွေပြရန် အောက်ခြေတွင် ထည့်ပါ
+            lines.append(f"\n💰 စုစုပေါင်း: {total_all_numbers} ကျပ်")
+            await update.message.reply_text("\n".join(lines))
     except Exception as e:
         logger.error(f"Error in ledger: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
-
-
+        
 async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, break_limits, current_working_date
     try:
