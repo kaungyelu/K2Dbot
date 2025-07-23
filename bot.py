@@ -1301,13 +1301,13 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_reports = {}  # {username: {'total_bet': 0, 'power_bet': 0, 'com': X, 'za': Y}}
         grand_totals = {
             'total_bet': 0,
-            'power_bet': 0,
-            'commission': 0,
-            'win_amount': 0,
+            'total_power': 0,
+            'total_commission': 0,
+            'total_win': 0,
             'net_result': 0
         }
 
-        # 3. Process bets WITHOUT overbuy adjustment
+        # 3. Process bets (IGNORE OVERBUY COMPLETELY)
         for username, user_dates in user_data.items():
             if username not in user_reports:
                 user_reports[username] = {
@@ -1319,25 +1319,29 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for date_key in selected_dates:
                 if date_key in user_dates:
-                    # Track total bets
-                    date_total = sum(amt for _, amt in user_dates[date_key])
-                    user_reports[username]['total_bet'] += date_total
+                    # Sum all bets (no overbuy adjustment)
+                    total_bet = sum(amt for _, amt in user_dates[date_key])
+                    user_reports[username]['total_bet'] += total_bet
                     
-                    # Track power number bets
+                    # Sum power number bets
                     pnum = pnumber_per_date.get(date_key)
                     if pnum is not None:
-                        power_amt = sum(amt for num, amt in user_dates[date_key] if num == pnum)
-                        user_reports[username]['power_bet'] += power_amt
+                        power_bet = sum(amt for num, amt in user_dates[date_key] if num == pnum)
+                        user_reports[username]['power_bet'] += power_bet
 
         # 4. Calculate financials
         messages = ["📊 ရွေးချယ်ထားသော နေ့ရက်များ စုစုပေါင်းရလဒ် (Overbuy မပါ)"]
         messages.append(f"📅 ရက်စွဲများ: {', '.join(selected_dates)}\n")
         
         for username, report in user_reports.items():
+            # Skip if no bets
+            if report['total_bet'] <= 0:
+                continue
+                
             # Calculate values
             commission = (report['total_bet'] * report['com']) // 100
             after_com = report['total_bet'] - commission
-            win_amount = report['power_bet'] * report['za']
+            win_amount = report['power_bet'] * report['za'] if report['power_bet'] > 0 else 0
             net_result = after_com - win_amount
             
             # Build user message
@@ -1363,19 +1367,19 @@ async def dateall_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Update grand totals
             grand_totals['total_bet'] += report['total_bet']
-            grand_totals['power_bet'] += report['power_bet']
-            grand_totals['commission'] += commission
-            grand_totals['win_amount'] += win_amount
+            grand_totals['total_power'] += report['power_bet']
+            grand_totals['total_commission'] += commission
+            grand_totals['total_win'] += win_amount
             grand_totals['net_result'] += net_result
 
         # 5. Add grand totals
         messages.append("\n📌 စုစုပေါင်းရလဒ်:")
         messages.append(f"💵 စုစုပေါင်းလောင်းကြေး: {grand_totals['total_bet']}")
-        messages.append(f"📊 Com စုစုပေါင်း: {grand_totals['commission']}")
+        messages.append(f"📊 Com စုစုပေါင်း: {grand_totals['total_commission']}")
         
-        if grand_totals['power_bet'] > 0:
-            messages.append(f"🔴 Power Number စုစုပေါင်း: {grand_totals['power_bet']}")
-            messages.append(f"🎯 Win Amount စုစုပေါင်း: {grand_totals['win_amount']}")
+        if grand_totals['total_power'] > 0:
+            messages.append(f"🔴 Power Number စုစုပေါင်း: {grand_totals['total_power']}")
+            messages.append(f"🎯 Win Amount စုစုပေါင်း: {grand_totals['total_win']}")
         
         messages.append(
             f"📊 စုစုပေါင်းရလဒ်: {abs(grand_totals['net_result'])} "
