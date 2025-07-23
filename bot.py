@@ -537,50 +537,55 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only command")
             return
             
-        # Determine which date to show
         date_key = current_working_date if current_working_date else get_current_date_key()
         
         if date_key not in ledger:
             await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
             return
             
-        # Prepare ledger data
         ledger_data = ledger[date_key]
         power_num = pnumber_per_date.get(date_key, None)
-        
-        # Calculate totals
         total_amount = sum(ledger_data.values())
         power_amount = ledger_data.get(power_num, 0) if power_num is not None else 0
+
+        # HTML table structure
+        html_table = """
+        <div style="overflow-x: auto;">
+        <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+        """
         
-        # Build the message header
-        header = f"📅 {date_key} - လက်ကျန်ငွေစာရင်း\n\n"
-        
-        # Build calendar-style table
-        table = []
-        for row in range(10):  # 0-9 rows
-            row_cells = []
-            for col in range(10):  # 0-9 columns
+        # Create 10x10 grid
+        for row in range(10):
+            html_table += "<tr>"
+            for col in range(10):
                 num = col * 10 + row
                 amount = ledger_data.get(num, 0)
-                cell = f"{num:02d}:{amount:>4}"
-                row_cells.append(cell)
-            table.append("  ".join(row_cells))
+                cell_style = "background-color: #ffcccc;" if num == power_num else ""
+                html_table += f'<td style="{cell_style} text-align: center;">{num:02d}<br>{amount}</td>'
+            html_table += "</tr>"
         
-        # Combine all parts
-        message = header + "\n".join(table)
+        html_table += """
+        </table>
+        </div>
+        """
         
-        # Add footer
-        footer = "\n\n"
-        if power_num is not None:
-            footer += f"Power Number: {power_num:02d} ({power_amount})\n"
-        footer += f"စုစုပေါင်း: {total_amount}"
+        # Footer information
+        footer = f"""
+        <p>Power Number: {power_num:02d} ({power_amount})</p>
+        <p>စုစုပေါင်း: {total_amount}</p>
+        """
         
-        await update.message.reply_text(f"<pre>{message + footer}</pre>", parse_mode='HTML')
+        full_message = f"""
+        <b>📅 {date_key} - လက်ကျန်ငွေစာရင်း</b>
+        {html_table}
+        {footer}
+        """
+        
+        await update.message.reply_text(full_message, parse_mode='HTML')
         
     except Exception as e:
         logger.error(f"Error in ledger: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
-        
 async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, break_limits, current_working_date
     try:
