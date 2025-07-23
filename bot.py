@@ -552,51 +552,35 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_amount = sum(ledger_data.values())
         power_amount = ledger_data.get(power_num, 0) if power_num is not None else 0
         
-        # Build the table header
+        # Build the message header
         header = f"📅 {date_key} - လက်ကျန်ငွေစာရင်း\n\n"
         
-        # Build the number grid (10x10)
-        grid = []
+        # Build calendar-style table
+        table = []
         for row in range(10):  # 0-9 rows
-            row_numbers = []
+            row_cells = []
             for col in range(10):  # 0-9 columns
                 num = col * 10 + row
                 amount = ledger_data.get(num, 0)
-                
-                # Format number with color if it's power number
-                num_str = f"{num:02d}"
-                if num == power_num:
-                    num_str = f"🔴{num_str}🔴"
-                
-                # Format amount (right aligned)
-                amount_str = f"{amount}".rjust(5)
-                
-                # Combine number and amount
-                cell = f"{num_str}:{amount_str}"
-                row_numbers.append(cell)
-            
-            # Join cells in the row with spaces
-            grid_row = " | ".join(row_numbers)
-            grid.append(grid_row)
-        
-        # Combine all rows
-        table = "\n".join(grid)
-        
-        # Build footer with power number and total
-        footer = "\n\n"
-        if power_num is not None:
-            footer += f"🔴 Power Number: {power_num:02d} ({power_amount})\n"
-        footer += f"💰 စုစုပေါင်း: {total_amount}"
+                cell = f"{num:02d}:{amount:>4}"
+                row_cells.append(cell)
+            table.append("  ".join(row_cells))
         
         # Combine all parts
-        message = header + table + footer
+        message = header + "\n".join(table)
         
-        await update.message.reply_text(f"<pre>{message}</pre>", parse_mode='HTML')
+        # Add footer
+        footer = "\n\n"
+        if power_num is not None:
+            footer += f"Power Number: {power_num:02d} ({power_amount})\n"
+        footer += f"စုစုပေါင်း: {total_amount}"
+        
+        await update.message.reply_text(f"<pre>{message + footer}</pre>", parse_mode='HTML')
         
     except Exception as e:
         logger.error(f"Error in ledger: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
-
+        
 async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, break_limits, current_working_date
     try:
