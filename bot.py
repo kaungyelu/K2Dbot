@@ -35,6 +35,7 @@ overbuy_list = {}  # {date_key: {username: {num: amount}}}
 message_store = {}  # {(user_id, message_id): (sent_message_id, bets, total_amount, date_key)}
 overbuy_selections = {}  # {date_key: {username: {num: amount}}}
 current_working_date = None  # For admin date selection
+closed_numbers = set()  # Store closed numbers
 
 # Com and Za data
 com_data = {}
@@ -75,7 +76,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["ကော်နှင့်အဆ သတ်မှတ်ရန်", "လက်ရှိအချိန်မှစုစုပေါင်း"],
             ["ဂဏန်းနှင့်ငွေပေါင်း", "ကော်မရှင်များ"],
             ["ရက်ချိန်းရန်", "တစ်ယောက်ခြင်းစာရင်း"],
-            ["ရက်အလိုက်စာရင်းစုစုပေါင်း"],
+            ["ဟော့ဂဏန်းပိတ်ရန်", "ရက်အလိုက်စာရင်းစုစုပေါင်း"],
             ["ရက်အကုန်ဖျက်ရန်", "ရက်အလိုက်ဖျက်ရန်"]
         ]
     else:
@@ -103,12 +104,12 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         "တစ်ယောက်ခြင်းစာရင်း": "/posthis",
         "ရက်အလိုက်စာရင်းစုစုပေါင်း": "/dateall",
         "ရက်ချိန်းရန်": "/Cdate",
-        "ရက်အလိုက်ဖျက်ရန်": "/Ddate"
+        "ရက်အလိုက်ဖျက်ရန်": "/Ddate",
+        "ဟော့ဂဏန်းပိတ်ရန်": "/numclose"
     }
     
     if text in command_map:
         command = command_map[text]
-        # Call the appropriate handler based on the command
         if command == "/dateopen":
             await dateopen(update, context)
         elif command == "/dateclose":
@@ -139,6 +140,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             await change_working_date(update, context)
         elif command == "/Ddate":
             await delete_date(update, context)
+        elif command == "/numclose":
+            await numclose(update, context)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, current_working_date
@@ -170,6 +173,98 @@ async def dateclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Ledger closed for {key}")
     await update.message.reply_text(f"✅ {key} စာရင်းပိတ်လိုက်ပါပြီ")
 
+async def numclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id, closed_numbers
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ Admin only command")
+        return
+
+    if not context.args:
+        if closed_numbers:
+            nums_str = " ".join(f"{n:02d}" for n in sorted(closed_numbers))
+            keyboard = [[InlineKeyboardButton("🗑 Delete All", callback_data="numclose_delete_all")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                f"🔒 Closed Numbers: {nums_str}",
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text("ℹ️ Usage: /numclose [numbers]\nℹ️ No numbers currently closed")
+        return
+
+    try:
+        text = " ".join(context.args)
+        new_numbers = set()
+        
+        # Check for special cases
+        special_cases = {
+            "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
+            "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
+            "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+            "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
+            "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
+        }
+
+        dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
+        
+        found_special = False
+        for case_name, case_numbers in special_cases.items():
+            if case_name in text:
+                new_numbers.update(case_numbers)
+                found_special = True
+                break
+
+        if not found_special:
+            for dtype in dynamic_types:
+                if dtype in text:
+                    parts = re.findall(r'\d+', text)
+                    if parts:
+                        digit = int(parts[0])
+                        if dtype == "ထိပ်":
+                            new_numbers.update([digit * 10 + j for j in range(10)])
+                        elif dtype == "ပိတ်":
+                            new_numbers.update([j * 10 + digit for j in range(10)])
+                        elif dtype == "ဘရိတ်":
+                            new_numbers.update([n for n in range(100) if (n//10 + n%10) % 10 == digit])
+                        elif dtype == "အပါ":
+                            tens = [digit * 10 + j for j in range(10)]
+                            units = [j * 10 + digit for j in range(10)]
+                            new_numbers.update(tens + units)
+                    found_special = True
+                    break
+
+        if not found_special:
+            numbers = re.findall(r'\d+', text)
+            for num in numbers:
+                num_int = int(num)
+                if 0 <= num_int <= 99:
+                    new_numbers.add(num_int)
+                if 'r' in text.lower():
+                    new_numbers.add(reverse_number(num_int))
+
+        closed_numbers.update(new_numbers)
+        
+        nums_str = " ".join(f"{n:02d}" for n in sorted(closed_numbers))
+        keyboard = [[InlineKeyboardButton("🗑 Delete All", callback_data="numclose_delete_all")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            f"✅ Closed numbers updated:\n🔒 {nums_str}",
+            reply_markup=reply_markup
+        )
+
+    except Exception as e:
+        logger.error(f"Error in numclose: {str(e)}")
+        await update.message.reply_text("❌ Error processing numbers. Please check your input.")
+
+async def numclose_delete_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    global closed_numbers
+    closed_numbers = set()
+    await query.edit_message_text("✅ All closed numbers have been cleared")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
@@ -188,19 +283,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ မက်ဆေ့ဂျ်မရှိပါ")
             return
 
-        # Process the message line by line
         lines = text.split('\n')
         all_bets = []
         total_amount = 0
+        blocked_bets = []
 
         for line in lines:
             line = line.strip()
             if not line:
                 continue
 
-            # Check for wheel cases first
+            # Check for wheel cases
             if 'အခွေ' in line or 'အပူးပါအခွေ' in line:
-                # Extract base numbers and amount
                 if 'အခွေ' in line:
                     parts = line.split('အခွေ')
                     base_part = parts[0]
@@ -210,13 +304,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     base_part = parts[0]
                     amount_part = parts[1]
                 
-                # Clean base numbers (remove all non-digits)
                 base_numbers = ''.join([c for c in base_part if c.isdigit()])
-                
-                # Clean amount (remove all non-digits)
                 amount = int(''.join([c for c in amount_part if c.isdigit()]))
                 
-                # Generate all possible pairs
                 pairs = []
                 for i in range(len(base_numbers)):
                     for j in range(len(base_numbers)):
@@ -225,17 +315,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             if num not in pairs:
                                 pairs.append(num)
                 
-                # If အပူးပါအခွေ, add doubles
                 if 'အပူးပါအခွေ' in line:
                     for d in base_numbers:
                         double = int(d + d)
                         if double not in pairs:
                             pairs.append(double)
                 
-                # Add all bets
                 for num in pairs:
-                    all_bets.append(f"{num:02d}-{amount}")
-                    total_amount += amount
+                    if num in closed_numbers:
+                        blocked_bets.append(f"{num:02d}-{amount}")
+                    else:
+                        all_bets.append(f"{num:02d}-{amount}")
+                        total_amount += amount
                 continue
 
             # Check for special cases
@@ -259,26 +350,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
             
-            # Check for special cases with flexible formatting
             found_special = False
             for case_name, case_numbers in special_cases.items():
-                # Check if line starts with any variation of the case name
                 case_variations = [case_name]
                 if case_name == "နက္ခ":
                     case_variations.extend(["နခ", "နက်ခ", "နတ်ခ", "နခက်", "နတ်ခက်", "နက်ခက်", "နတ်ခတ်", "နက်ခတ်", "နခတ်", "နခပ်"])
                 
                 for variation in case_variations:
                     if line.startswith(variation):
-                        # Extract amount - allow any separator or none
                         amount_str = line[len(variation):].strip()
-                        # Remove all non-digit characters
                         amount_str = ''.join([c for c in amount_str if c.isdigit()])
                         
                         if amount_str and int(amount_str) >= 100:
                             amt = int(amount_str)
                             for num in case_numbers:
-                                all_bets.append(f"{num:02d}-{amt}")
-                                total_amount += amt
+                                if num in closed_numbers:
+                                    blocked_bets.append(f"{num:02d}-{amt}")
+                                else:
+                                    all_bets.append(f"{num:02d}-{amt}")
+                                    total_amount += amt
                             found_special = True
                             break
                     if found_special:
@@ -289,19 +379,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if found_special:
                 continue
 
-            # Check for dynamic types with flexible formatting
             for dtype in dynamic_types:
                 if dtype in line:
-                    # Extract all numbers from the line
                     numbers = []
                     amount = 0
                     
-                    # Find all number parts
                     parts = re.findall(r'\d+', line)
                     if parts:
-                        # The last number is the amount
                         amount = int(parts[-1]) if int(parts[-1]) >= 100 else 0
-                        # Other numbers are the digits
                         digits = [int(p) for p in parts[:-1] if len(p) == 1 and p.isdigit()]
                     
                     if amount >= 100 and digits:
@@ -322,59 +407,68 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 numbers.extend(list(set(tens + units)))
                         
                         for num in numbers:
-                            all_bets.append(f"{num:02d}-{amount}")
-                            total_amount += amount
+                            if num in closed_numbers:
+                                blocked_bets.append(f"{num:02d}-{amount}")
+                            else:
+                                all_bets.append(f"{num:02d}-{amount}")
+                                total_amount += amount
                         found_special = True
                         break
             
             if found_special:
                 continue
 
-            # Process regular number-amount pairs with r/R (flexible formatting)
             if 'r' in line.lower():
-                # Split into parts before and after r/R
                 r_pos = line.lower().find('r')
                 before_r = line[:r_pos]
                 after_r = line[r_pos+1:]
                 
-                # Extract numbers before r
                 nums_before = re.findall(r'\d+', before_r)
                 nums_before = [int(n) for n in nums_before if 0 <= int(n) <= 99]
                 
-                # Extract amounts after r
                 amounts = re.findall(r'\d+', after_r)
                 amounts = [int(a) for a in amounts if int(a) >= 100]
                 
                 if nums_before and amounts:
                     if len(amounts) == 1:
-                        # Single amount: apply to both base and reverse
                         for num in nums_before:
-                            all_bets.append(f"{num:02d}-{amounts[0]}")
-                            all_bets.append(f"{reverse_number(num):02d}-{amounts[0]}")
-                            total_amount += amounts[0] * 2
+                            if num in closed_numbers:
+                                blocked_bets.append(f"{num:02d}-{amounts[0]}")
+                            else:
+                                all_bets.append(f"{num:02d}-{amounts[0]}")
+                                total_amount += amounts[0]
+                            
+                            rev_num = reverse_number(num)
+                            if rev_num in closed_numbers:
+                                blocked_bets.append(f"{rev_num:02d}-{amounts[0]}")
+                            else:
+                                all_bets.append(f"{rev_num:02d}-{amounts[0]}")
+                                total_amount += amounts[0]
                     else:
-                        # Two amounts: first for base, second for reverse
                         for num in nums_before:
-                            all_bets.append(f"{num:02d}-{amounts[0]}")
-                            all_bets.append(f"{reverse_number(num):02d}-{amounts[1]}")
-                            total_amount += amounts[0] + amounts[1]
+                            if num in closed_numbers:
+                                blocked_bets.append(f"{num:02d}-{amounts[0]}")
+                            else:
+                                all_bets.append(f"{num:02d}-{amounts[0]}")
+                                total_amount += amounts[0]
+                            
+                            rev_num = reverse_number(num)
+                            if rev_num in closed_numbers:
+                                blocked_bets.append(f"{rev_num:02d}-{amounts[1]}")
+                            else:
+                                all_bets.append(f"{rev_num:02d}-{amounts[1]}")
+                                total_amount += amounts[1]
                     continue
 
-            # Process regular number-amount pairs without r/R (flexible formatting)
             numbers = []
             amount = 0
             
-            # Find all numbers in the line
             all_numbers = re.findall(r'\d+', line)
             if all_numbers:
-                # The last number is the amount if it's >= 100
                 if int(all_numbers[-1]) >= 100:
                     amount = int(all_numbers[-1])
-                    # Other numbers are the bet numbers
                     numbers = [int(n) for n in all_numbers[:-1] if 0 <= int(n) <= 99]
                 else:
-                    # Maybe the line is just numbers separated by something
-                    # Try to find pairs where second number is >= 100
                     for i in range(len(all_numbers)-1):
                         if 0 <= int(all_numbers[i]) <= 99 and int(all_numbers[i+1]) >= 100:
                             numbers.append(int(all_numbers[i]))
@@ -383,14 +477,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if amount >= 100 and numbers:
                 for num in numbers:
-                    all_bets.append(f"{num:02d}-{amount}")
-                    total_amount += amount
+                    if num in closed_numbers:
+                        blocked_bets.append(f"{num:02d}-{amount}")
+                    else:
+                        all_bets.append(f"{num:02d}-{amount}")
+                        total_amount += amount
 
-        if not all_bets:
+        if not all_bets and not blocked_bets:
             await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500")
             return
 
-        # Update data stores
         if user.username not in user_data:
             user_data[user.username] = {}
         if key not in user_data[user.username]:
@@ -404,19 +500,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             num = int(num)
             amt = int(amt)
             
-            # Update ledger
             if num not in ledger[key]:
                 ledger[key][num] = 0
             ledger[key][num] += amt
             
-            # Update user data
             user_data[user.username][key].append((num, amt))
 
-            # Send confirmation with delete button
-        response = "\n".join(all_bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
+        response_parts = []
+        if all_bets:
+            response_parts.append("\n".join(all_bets))
+            response_parts.append(f"စုစုပေါင်း {total_amount} ကျပ်")
+        
+        if blocked_bets:
+            blocked_nums = ", ".join(set(bet.split('-')[0] for bet in blocked_bets))
+            response_parts.append(f"\n🚫 ပိတ်ထားသောဂဏန်းများ: {blocked_nums} (မရပါ)")
+
         keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
+        
+        sent_message = await update.message.reply_text(
+            "\n".join(response_parts),
+            reply_markup=reply_markup
+        )
+        
         message_store[(user.id, update.message.message_id)] = (sent_message.message_id, all_bets, total_amount, key)
             
     except Exception as e:
@@ -533,13 +639,12 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Error occurred while canceling deletion")
 
 async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, current_working_date
+    global admin_id, current_working_date, closed_numbers
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
             
-        # Determine which date to show
         date_key = current_working_date if current_working_date else get_current_date_key()
         
         if date_key not in ledger:
@@ -549,16 +654,18 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [f"📒 {date_key} လက်ကျန်ငွေစာရင်း"]
         ledger_data = ledger[date_key]
         
-        total_all_numbers = 0  # စုစုပေါင်းငွေအတွက်
+        total_all_numbers = 0
         
         for i in range(100):
             total = ledger_data.get(i, 0)
             if total > 0:
                 if date_key in pnumber_per_date and i == pnumber_per_date[date_key]:
                     lines.append(f"🔴 {i:02d} ➤ {total} 🔴")
+                elif i in closed_numbers:
+                    lines.append(f"🚫 {i:02d} ➤ {total} (Closed)")
                 else:
                     lines.append(f"{i:02d} ➤ {total}")
-                total_all_numbers += total  # စုစုပေါင်းငွေတွက်ရန်
+                total_all_numbers += total
 
         if len(lines) == 1:
             await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
@@ -567,12 +674,16 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pnum = pnumber_per_date[date_key]
                 lines.append(f"\n🔴 Power Number: {pnum:02d} ➤ {ledger_data.get(pnum, 0)}")
             
-            # စုစုပေါင်းငွေပြရန် အောက်ခြေတွင် ထည့်ပါ
+            if closed_numbers:
+                closed_str = " ".join(f"{n:02d}" for n in sorted(closed_numbers))
+                lines.append(f"\n🔒 Closed Numbers: {closed_str}")
+            
             lines.append(f"\n💰 စုစုပေါင်း: {total_all_numbers} ကျပ်")
             await update.message.reply_text("\n".join(lines))
     except Exception as e:
         logger.error(f"Error in ledger: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
+
         
 async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, break_limits, current_working_date
@@ -1726,6 +1837,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("dateall", dateall))
     app.add_handler(CommandHandler("Cdate", change_working_date))
     app.add_handler(CommandHandler("Ddate", delete_date))
+    app.add_handler(CommandHandler("numclose", numclose))
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(comza_input, pattern=r"^comza:"))
@@ -1739,6 +1851,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(posthis_callback, pattern=r"^posthis:"))
     app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
     app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
+    app.add_handler(CallbackQueryHandler(numclose_delete_all, pattern=r"^numclose_delete_all$"))
     
     # Calendar handlers
     app.add_handler(CallbackQueryHandler(show_calendar, pattern=r"^cdate_calendar$"))
