@@ -566,43 +566,6 @@ def process_bet_line(line, blocked_numbers):
 
     return bets, blocked
 
-    
-            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500")
-            return
-
-        # Update data stores
-        if user.username not in user_data:
-            user_data[user.username] = {}
-        if key not in user_data[user.username]:
-            user_data[user.username][key] = []
-
-        if key not in ledger:
-            ledger[key] = {}
-
-        for bet in all_bets:
-            num, amt = bet.split('-')
-            num = int(num)
-            amt = int(amt)
-            
-            # Update ledger
-            if num not in ledger[key]:
-                ledger[key][num] = 0
-            ledger[key][num] += amt
-            
-            # Update user data
-            user_data[user.username][key].append((num, amt))
-
-            # Send confirmation with delete button
-        response = "\n".join(all_bets) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
-        keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
-        message_store[(user.id, update.message.message_id)] = (sent_message.message_id, all_bets, total_amount, key)
-            
-    except Exception as e:
-        logger.error(f"Error in handle_message: {str(e)}")
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-
 async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
