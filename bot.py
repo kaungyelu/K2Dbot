@@ -632,7 +632,7 @@ async def overbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_key = current_working_date if current_working_date else get_current_date_key()
             
         if not context.args:
-            await update.message.reply_text("ℹ️ ကာဒိုင်အမည်ထည့်ပါ")
+            await update.message.reply_text("ℹ️ /overbuy ကာဒိုင်အမည်ထည့်ပါ")
             return
             
         if date_key not in break_limits:
