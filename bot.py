@@ -26,7 +26,7 @@ MYANMAR_TIMEZONE = pytz.timezone('Asia/Yangon')
 
 # Globals
 admin_id = None
-user_data = {}  # {username: {date_key: [(num, amt)]}}
+user_data = {}  # {username: {date_key: [(num, amt)]}
 ledger = {}     # {date_key: {number: total_amount}}
 break_limits = {}  # {date_key: limit}
 pnumber_per_date = {}  # {date_key: power_number}
@@ -35,6 +35,7 @@ overbuy_list = {}  # {date_key: {username: {num: amount}}}
 message_store = {}  # {(user_id, message_id): (sent_message_id, bets, total_amount, date_key)}
 overbuy_selections = {}  # {date_key: {username: {num: amount}}}
 current_working_date = None  # For admin date selection
+numclose_numbers = set()  # ပိတ်ထားသောဂဏန်းများ
 
 # Com and Za data
 com_data = {}
@@ -75,7 +76,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["ကော်နှင့်အဆ သတ်မှတ်ရန်", "လက်ရှိအချိန်မှစုစုပေါင်း"],
             ["ဂဏန်းနှင့်ငွေပေါင်း", "ကော်မရှင်များ"],
             ["ရက်ချိန်းရန်", "တစ်ယောက်ခြင်းစာရင်း"],
-            ["ရက်အလိုက်စာရင်းစုစုပေါင်း"],
+            ["ဟော့ဂဏန်းပိတ်ရန်", "ရက်အလိုက်စာရင်းစုစုပေါင်း"],
             ["ရက်အကုန်ဖျက်ရန်", "ရက်အလိုက်ဖျက်ရန်"]
         ]
     else:
@@ -103,7 +104,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         "တစ်ယောက်ခြင်းစာရင်း": "/posthis",
         "ရက်အလိုက်စာရင်းစုစုပေါင်း": "/dateall",
         "ရက်ချိန်းရန်": "/Cdate",
-        "ရက်အလိုက်ဖျက်ရန်": "/Ddate"
+        "ရက်အလိုက်ဖျက်ရန်": "/Ddate",
+        "ဟော့ဂဏန်းပိတ်ရန်": "/numclose"
     }
     
     if text in command_map:
@@ -139,36 +141,131 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             await change_working_date(update, context)
         elif command == "/Ddate":
             await delete_date(update, context)
+        elif command == "/numclose":
+            await numclose(update, context)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, current_working_date
-    admin_id = update.effective_user.id
-    current_working_date = get_current_date_key()
-    logger.info(f"Admin set to: {admin_id}")
-    await update.message.reply_text("🤖 Bot started. Admin privileges granted!")
-    await show_menu(update, context)
-
-async def dateopen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id
-    if update.effective_user.id != admin_id:
-        await update.message.reply_text("❌ Admin only command")
-        return
+async def numclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_id, numclose_numbers
+    try:
+        if update.effective_user.id != admin_id:
+            await update.message.reply_text("❌ Admin only command")
+            return
+            
+        if not context.args:
+            if numclose_numbers:
+                nums_str = " ".join(f"{n:02d}" for n in sorted(numclose_numbers))
+                keyboard = [[InlineKeyboardButton("🗑 Delete All", callback_data="numclose_delete")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    f"🔒 ပိတ်ထားသောဂဏန်းများ:\n{nums_str}\n\nဂဏန်းများထပ်မံထည့်ရန် /numclose နှင့်အတူဂဏန်းများပို့ပါ",
+                    reply_markup=reply_markup
+                )
+            else:
+                await update.message.reply_text("ℹ️ ပိတ်ထားသောဂဏန်းများမရှိပါ\nဂဏန်းများထည့်ရန် /numclose နှင့်အတူဂဏန်းများပို့ပါ")
+            return
+            
+        # Process numbers from command
+        input_text = " ".join(context.args)
+        processed_nums = process_numclose_input(input_text)
         
-    key = get_current_date_key()
-    date_control[key] = True
-    logger.info(f"Ledger opened for {key}")
-    await update.message.reply_text(f"✅ {key} စာရင်းဖွင့်ပြီးပါပြီ")
-
-async def dateclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id
-    if update.effective_user.id != admin_id:
-        await update.message.reply_text("❌ Admin only command")
-        return
+        if not processed_nums:
+            await update.message.reply_text("⚠️ မှန်ကန်သောဂဏန်းပုံစံထည့်ပါ (ဥပမာ: /numclose 12 34 56)")
+            return
+            
+        # Add new numbers
+        numclose_numbers.update(processed_nums)
         
-    key = get_current_date_key()
-    date_control[key] = False
-    logger.info(f"Ledger closed for {key}")
-    await update.message.reply_text(f"✅ {key} စာရင်းပိတ်လိုက်ပါပြီ")
+        # Show updated list
+        nums_str = " ".join(f"{n:02d}" for n in sorted(numclose_numbers))
+        keyboard = [[InlineKeyboardButton("🗑 Delete All", callback_data="numclose_delete")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            f"✅ ပိတ်ထားသောဂဏန်းများအသစ်ထည့်ပြီးပါပြီ:\n{nums_str}",
+            reply_markup=reply_markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in numclose: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+def process_numclose_input(input_text):
+    numbers = set()
+    
+    # Check for special cases first
+    special_cases = {
+        "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
+        "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
+        "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နက်ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နတ်ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နတ်ခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နက်ခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နတ်ခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နက်ခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နခပ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
+        "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
+    }
+
+    dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
+    
+    # Check for special cases
+    for case_name, case_numbers in special_cases.items():
+        if case_name in input_text:
+            numbers.update(case_numbers)
+            return numbers
+    
+    # Check for dynamic types
+    for dtype in dynamic_types:
+        if dtype in input_text:
+            digits = [int(d) for d in re.findall(r'\d', input_text) if d.isdigit()]
+            if not digits:
+                continue
+                
+            if dtype == "ထိပ်":
+                for d in digits:
+                    numbers.update([d * 10 + j for j in range(10)])
+            elif dtype == "ပိတ်":
+                for d in digits:
+                    numbers.update([j * 10 + d for j in range(10)])
+            elif dtype == "ဘရိတ်":
+                for d in digits:
+                    numbers.update([n for n in range(100) if (n//10 + n%10) % 10 == d])
+            elif dtype == "အပါ":
+                for d in digits:
+                    tens = [d * 10 + j for j in range(10)]
+                    units = [j * 10 + d for j in range(10)]
+                    numbers.update(tens + units)
+            return numbers
+    
+    # Process regular numbers
+    all_numbers = re.findall(r'\d+', input_text)
+    for num_str in all_numbers:
+        if len(num_str) == 1:
+            num = int(num_str)
+            if 0 <= num <= 9:
+                numbers.add(num)
+        elif len(num_str) == 2:
+            num = int(num_str)
+            if 0 <= num <= 99:
+                numbers.add(num)
+    
+    return numbers
+
+async def numclose_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        global numclose_numbers
+        numclose_numbers = set()
+        await query.edit_message_text("✅ ပိတ်ထားသောဂဏန်းအားလုံးဖျက်လိုက်ပါပြီ")
+    except Exception as e:
+        logger.error(f"Error in numclose_delete: {str(e)}")
+        await query.edit_message_text("❌ Error occurred")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -188,205 +285,288 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ မက်ဆေ့ဂျ်မရှိပါ")
             return
 
+        # Check if message is for numclose
+        if text.startswith('/numclose') and user.id == admin_id:
+            return  # Let the numclose handler handle it
+
         # Process the message line by line
         lines = text.split('\n')
         all_bets = []
         total_amount = 0
-
+        blocked_bets = []
+        
         for line in lines:
             line = line.strip()
             if not line:
                 continue
 
-            # Check for wheel cases first
-            if 'အခွေ' in line or 'အပူးပါအခွေ' in line:
-                # Extract base numbers and amount
-                if 'အခွေ' in line:
-                    parts = line.split('အခွေ')
-                    base_part = parts[0]
-                    amount_part = parts[1]
-                else:
-                    parts = line.split('အပူးပါအခွေ')
-                    base_part = parts[0]
-                    amount_part = parts[1]
-                
-                # Clean base numbers (remove all non-digits)
-                base_numbers = ''.join([c for c in base_part if c.isdigit()])
-                
-                # Clean amount (remove all non-digits)
-                amount = int(''.join([c for c in amount_part if c.isdigit()]))
-                
-                # Generate all possible pairs
-                pairs = []
-                for i in range(len(base_numbers)):
-                    for j in range(len(base_numbers)):
-                        if i != j:
-                            num = int(base_numbers[i] + base_numbers[j])
-                            if num not in pairs:
-                                pairs.append(num)
-                
-                # If အပူးပါအခွေ, add doubles
-                if 'အပူးပါအခွေ' in line:
-                    for d in base_numbers:
-                        double = int(d + d)
-                        if double not in pairs:
-                            pairs.append(double)
-                
-                # Add all bets
-                for num in pairs:
-                    all_bets.append(f"{num:02d}-{amount}")
-                    total_amount += amount
-                continue
+            # Process each line and check against numclose_numbers
+            processed_bets, blocked = process_bet_line(line, numclose_numbers)
+            all_bets.extend(processed_bets)
+            blocked_bets.extend(blocked)
+            total_amount += sum(int(bet.split('-')[1]) for bet in processed_bets)
 
-            # Check for special cases
-            special_cases = {
-                "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
-                "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
-                "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နက်ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နတ်ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နတ်ခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နက်ခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နတ်ခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နက်ခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နခပ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
-                "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
-            }
+        if not all_bets and not blocked_bets:
+            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500")
+            return
 
-            dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
+        # Update data stores
+        if user.username not in user_data:
+            user_data[user.username] = {}
+        if key not in user_data[user.username]:
+            user_data[user.username][key] = []
+
+        if key not in ledger:
+            ledger[key] = {}
+
+        for bet in all_bets:
+            num, amt = bet.split('-')
+            num = int(num)
+            amt = int(amt)
             
-            # Check for special cases with flexible formatting
-            found_special = False
-            for case_name, case_numbers in special_cases.items():
-                # Check if line starts with any variation of the case name
-                case_variations = [case_name]
-                if case_name == "နက္ခ":
-                    case_variations.extend(["နခ", "နက်ခ", "နတ်ခ", "နခက်", "နတ်ခက်", "နက်ခက်", "နတ်ခတ်", "နက်ခတ်", "နခတ်", "နခပ်"])
+            # Update ledger
+            if num not in ledger[key]:
+                ledger[key][num] = 0
+            ledger[key][num] += amt
+            
+            # Update user data
+            user_data[user.username][key].append((num, amt))
+
+        # Prepare response message
+        response_parts = []
+        if all_bets:
+            response_parts.append("\n".join(all_bets))
+        if blocked_bets:
+            blocked_nums = ", ".join(sorted(set(blocked.split('-')[0] for blocked in blocked_bets)))
+            response_parts.append(f"\n🚫 ပိတ်ထားသောဂဏန်းများ: {blocked_nums} (မရပါ)")
+
+        response = "".join(response_parts) + f"\nစုစုပေါင်း {total_amount} ကျပ်"
+        
+        # Send confirmation with delete button
+        keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data=f"delete:{user.id}:{update.message.message_id}:{key}")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        sent_message = await update.message.reply_text(response, reply_markup=reply_markup)
+        message_store[(user.id, update.message.message_id)] = (sent_message.message_id, all_bets, total_amount, key)
+            
+    except Exception as e:
+        logger.error(f"Error in handle_message: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+def process_bet_line(line, blocked_numbers):
+    bets = []
+    blocked = []
+    
+    # Check for wheel cases first
+    if 'အခွေ' in line or 'အပူးပါအခွေ' in line:
+        # Extract base numbers and amount
+        if 'အခွေ' in line:
+            parts = line.split('အခွေ')
+            base_part = parts[0]
+            amount_part = parts[1]
+        else:
+            parts = line.split('အပူးပါအခွေ')
+            base_part = parts[0]
+            amount_part = parts[1]
+        
+        # Clean base numbers (remove all non-digits)
+        base_numbers = ''.join([c for c in base_part if c.isdigit()])
+        
+        # Clean amount (remove all non-digits)
+        amount = int(''.join([c for c in amount_part if c.isdigit()]))
+        
+        # Generate all possible pairs
+        pairs = []
+        for i in range(len(base_numbers)):
+            for j in range(len(base_numbers)):
+                if i != j:
+                    num = int(base_numbers[i] + base_numbers[j])
+                    if num not in pairs:
+                        pairs.append(num)
+        
+        # If အပူးပါအခွေ, add doubles
+        if 'အပူးပါအခွေ' in line:
+            for d in base_numbers:
+                double = int(d + d)
+                if double not in pairs:
+                    pairs.append(double)
+        
+        # Add all bets
+        for num in pairs:
+            if num in blocked_numbers:
+                blocked.append(f"{num:02d}-{amount}")
+            else:
+                bets.append(f"{num:02d}-{amount}")
+        return bets, blocked
+
+    # Check for special cases
+    special_cases = {
+        "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
+        "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
+        "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နက်ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နတ်ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နတ်ခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နက်ခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နတ်ခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နက်ခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "နခပ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
+        "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
+        "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
+    }
+
+    dynamic_types = ["ထိပ်", "ပိတ်", "ဘရိတ်", "အပါ"]
+    
+    # Check for special cases with flexible formatting
+    found_special = False
+    for case_name, case_numbers in special_cases.items():
+        # Check if line starts with any variation of the case name
+        case_variations = [case_name]
+        if case_name == "နက္ခ":
+            case_variations.extend(["နခ", "နက်ခ", "နတ်ခ", "နခက်", "နတ်ခက်", "နက်ခက်", "နတ်ခတ်", "နက်ခတ်", "နခတ်", "နခပ်"])
+        
+        for variation in case_variations:
+            if line.startswith(variation):
+                # Extract amount - allow any separator or none
+                amount_str = line[len(variation):].strip()
+                # Remove all non-digit characters
+                amount_str = ''.join([c for c in amount_str if c.isdigit()])
                 
-                for variation in case_variations:
-                    if line.startswith(variation):
-                        # Extract amount - allow any separator or none
-                        amount_str = line[len(variation):].strip()
-                        # Remove all non-digit characters
-                        amount_str = ''.join([c for c in amount_str if c.isdigit()])
-                        
-                        if amount_str and int(amount_str) >= 100:
-                            amt = int(amount_str)
-                            for num in case_numbers:
-                                all_bets.append(f"{num:02d}-{amt}")
-                                total_amount += amt
-                            found_special = True
-                            break
-                    if found_special:
-                        break
-                if found_special:
+                if amount_str and int(amount_str) >= 100:
+                    amt = int(amount_str)
+                    for num in case_numbers:
+                        if num in blocked_numbers:
+                            blocked.append(f"{num:02d}-{amt}")
+                        else:
+                            bets.append(f"{num:02d}-{amt}")
+                    found_special = True
                     break
-            
             if found_special:
-                continue
+                break
+        if found_special:
+            break
+    
+    if found_special:
+        return bets, blocked
 
-            # Check for dynamic types with flexible formatting
-            for dtype in dynamic_types:
-                if dtype in line:
-                    # Extract all numbers from the line
-                    numbers = []
-                    amount = 0
-                    
-                    # Find all number parts
-                    parts = re.findall(r'\d+', line)
-                    if parts:
-                        # The last number is the amount
-                        amount = int(parts[-1]) if int(parts[-1]) >= 100 else 0
-                        # Other numbers are the digits
-                        digits = [int(p) for p in parts[:-1] if len(p) == 1 and p.isdigit()]
-                    
-                    if amount >= 100 and digits:
-                        numbers = []
-                        if dtype == "ထိပ်":
-                            for d in digits:
-                                numbers.extend([d * 10 + j for j in range(10)])
-                        elif dtype == "ပိတ်":
-                            for d in digits:
-                                numbers.extend([j * 10 + d for j in range(10)])
-                        elif dtype == "ဘရိတ်":
-                            for d in digits:
-                                numbers.extend([n for n in range(100) if (n//10 + n%10) % 10 == d])
-                        elif dtype == "အပါ":
-                            for d in digits:
-                                tens = [d * 10 + j for j in range(10)]
-                                units = [j * 10 + d for j in range(10)]
-                                numbers.extend(list(set(tens + units)))
-                        
-                        for num in numbers:
-                            all_bets.append(f"{num:02d}-{amount}")
-                            total_amount += amount
-                        found_special = True
-                        break
-            
-            if found_special:
-                continue
-
-            # Process regular number-amount pairs with r/R (flexible formatting)
-            if 'r' in line.lower():
-                # Split into parts before and after r/R
-                r_pos = line.lower().find('r')
-                before_r = line[:r_pos]
-                after_r = line[r_pos+1:]
-                
-                # Extract numbers before r
-                nums_before = re.findall(r'\d+', before_r)
-                nums_before = [int(n) for n in nums_before if 0 <= int(n) <= 99]
-                
-                # Extract amounts after r
-                amounts = re.findall(r'\d+', after_r)
-                amounts = [int(a) for a in amounts if int(a) >= 100]
-                
-                if nums_before and amounts:
-                    if len(amounts) == 1:
-                        # Single amount: apply to both base and reverse
-                        for num in nums_before:
-                            all_bets.append(f"{num:02d}-{amounts[0]}")
-                            all_bets.append(f"{reverse_number(num):02d}-{amounts[0]}")
-                            total_amount += amounts[0] * 2
-                    else:
-                        # Two amounts: first for base, second for reverse
-                        for num in nums_before:
-                            all_bets.append(f"{num:02d}-{amounts[0]}")
-                            all_bets.append(f"{reverse_number(num):02d}-{amounts[1]}")
-                            total_amount += amounts[0] + amounts[1]
-                    continue
-
-            # Process regular number-amount pairs without r/R (flexible formatting)
+    # Check for dynamic types with flexible formatting
+    for dtype in dynamic_types:
+        if dtype in line:
+            # Extract all numbers from the line
             numbers = []
             amount = 0
             
-            # Find all numbers in the line
-            all_numbers = re.findall(r'\d+', line)
-            if all_numbers:
-                # The last number is the amount if it's >= 100
-                if int(all_numbers[-1]) >= 100:
-                    amount = int(all_numbers[-1])
-                    # Other numbers are the bet numbers
-                    numbers = [int(n) for n in all_numbers[:-1] if 0 <= int(n) <= 99]
-                else:
-                    # Maybe the line is just numbers separated by something
-                    # Try to find pairs where second number is >= 100
-                    for i in range(len(all_numbers)-1):
-                        if 0 <= int(all_numbers[i]) <= 99 and int(all_numbers[i+1]) >= 100:
-                            numbers.append(int(all_numbers[i]))
-                            amount = int(all_numbers[i+1])
-                            break
+            # Find all number parts
+            parts = re.findall(r'\d+', line)
+            if parts:
+                # The last number is the amount
+                amount = int(parts[-1]) if int(parts[-1]) >= 100 else 0
+                # Other numbers are the digits
+                digits = [int(p) for p in parts[:-1] if len(p) == 1 and p.isdigit()]
             
-            if amount >= 100 and numbers:
+            if amount >= 100 and digits:
+                numbers = []
+                if dtype == "ထိပ်":
+                    for d in digits:
+                        numbers.extend([d * 10 + j for j in range(10)])
+                elif dtype == "ပိတ်":
+                    for d in digits:
+                        numbers.extend([j * 10 + d for j in range(10)])
+                elif dtype == "ဘရိတ်":
+                    for d in digits:
+                        numbers.extend([n for n in range(100) if (n//10 + n%10) % 10 == d])
+                elif dtype == "အပါ":
+                    for d in digits:
+                        tens = [d * 10 + j for j in range(10)]
+                        units = [j * 10 + d for j in range(10)]
+                        numbers.extend(list(set(tens + units)))
+                
                 for num in numbers:
-                    all_bets.append(f"{num:02d}-{amount}")
-                    total_amount += amount
+                    if num in blocked_numbers:
+                        blocked.append(f"{num:02d}-{amount}")
+                    else:
+                        bets.append(f"{num:02d}-{amount}")
+                found_special = True
+                break
+    
+    if found_special:
+        return bets, blocked
 
-        if not all_bets:
+    # Process regular number-amount pairs with r/R (flexible formatting)
+    if 'r' in line.lower():
+        # Split into parts before and after r/R
+        r_pos = line.lower().find('r')
+        before_r = line[:r_pos]
+        after_r = line[r_pos+1:]
+        
+        # Extract numbers before r
+        nums_before = re.findall(r'\d+', before_r)
+        nums_before = [int(n) for n in nums_before if 0 <= int(n) <= 99]
+        
+        # Extract amounts after r
+        amounts = re.findall(r'\d+', after_r)
+        amounts = [int(a) for a in amounts if int(a) >= 100]
+        
+        if nums_before and amounts:
+            if len(amounts) == 1:
+                # Single amount: apply to both base and reverse
+                for num in nums_before:
+                    rev_num = reverse_number(num)
+                    if num in blocked_numbers:
+                        blocked.append(f"{num:02d}-{amounts[0]}")
+                    else:
+                        bets.append(f"{num:02d}-{amounts[0]}")
+                    if rev_num in blocked_numbers:
+                        blocked.append(f"{rev_num:02d}-{amounts[0]}")
+                    else:
+                        bets.append(f"{rev_num:02d}-{amounts[0]}")
+            else:
+                # Two amounts: first for base, second for reverse
+                for num in nums_before:
+                    rev_num = reverse_number(num)
+                    if num in blocked_numbers:
+                        blocked.append(f"{num:02d}-{amounts[0]}")
+                    else:
+                        bets.append(f"{num:02d}-{amounts[0]}")
+                    if rev_num in blocked_numbers:
+                        blocked.append(f"{rev_num:02d}-{amounts[1]}")
+                    else:
+                        bets.append(f"{rev_num:02d}-{amounts[1]}")
+            return bets, blocked
+
+    # Process regular number-amount pairs without r/R (flexible formatting)
+    numbers = []
+    amount = 0
+    
+    # Find all numbers in the line
+    all_numbers = re.findall(r'\d+', line)
+    if all_numbers:
+        # The last number is the amount if it's >= 100
+        if int(all_numbers[-1]) >= 100:
+            amount = int(all_numbers[-1])
+            # Other numbers are the bet numbers
+            numbers = [int(n) for n in all_numbers[:-1] if 0 <= int(n) <= 99]
+        else:
+            # Maybe the line is just numbers separated by something
+            # Try to find pairs where second number is >= 100
+            for i in range(len(all_numbers)-1):
+                if 0 <= int(all_numbers[i]) <= 99 and int(all_numbers[i+1]) >= 100:
+                    numbers.append(int(all_numbers[i]))
+                    amount = int(all_numbers[i+1])
+                    break
+    
+    if amount >= 100 and numbers:
+        for num in numbers:
+            if num in blocked_numbers:
+                blocked.append(f"{num:02d}-{amount}")
+            else:
+                bets.append(f"{num:02d}-{amount}")
+
+    return bets, blocked
+
+       if not all_bets:
             await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500")
             return
 
@@ -1726,6 +1906,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("dateall", dateall))
     app.add_handler(CommandHandler("Cdate", change_working_date))
     app.add_handler(CommandHandler("Ddate", delete_date))
+    app.add_handler(CommandHandler("numclose", numclose))
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(comza_input, pattern=r"^comza:"))
@@ -1739,6 +1920,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(posthis_callback, pattern=r"^posthis:"))
     app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
     app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
+    app.add_handler(CallbackQueryHandler(numclose_delete, pattern=r"^numclose_delete$"))
     
     # Calendar handlers
     app.add_handler(CallbackQueryHandler(show_calendar, pattern=r"^cdate_calendar$"))
