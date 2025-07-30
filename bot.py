@@ -566,7 +566,7 @@ def process_bet_line(line, blocked_numbers):
 
     return bets, blocked
 
-       if not all_bets:
+    
             await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500")
             return
 
