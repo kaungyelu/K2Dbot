@@ -386,7 +386,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     all_bets.append(f"{num:02d}-{amount}")
                     total_amount += amount
 
-        if not all_bets:
+    if not all_bets:
             await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500")
             return
 
