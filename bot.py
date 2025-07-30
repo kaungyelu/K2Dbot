@@ -638,13 +638,15 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in cancel_delete: {str(e)}")
         await query.edit_message_text("❌ Error occurred while canceling deletion")
 
+
 async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, current_working_date, closed_numbers
+    global admin_id, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
             
+        # Determine which date to show
         date_key = current_working_date if current_working_date else get_current_date_key()
         
         if date_key not in ledger:
@@ -654,18 +656,16 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [f"📒 {date_key} လက်ကျန်ငွေစာရင်း"]
         ledger_data = ledger[date_key]
         
-        total_all_numbers = 0
+        total_all_numbers = 0  # စုစုပေါင်းငွေအတွက်
         
         for i in range(100):
             total = ledger_data.get(i, 0)
             if total > 0:
                 if date_key in pnumber_per_date and i == pnumber_per_date[date_key]:
                     lines.append(f"🔴 {i:02d} ➤ {total} 🔴")
-                elif i in closed_numbers:
-                    lines.append(f"🚫 {i:02d} ➤ {total} (Closed)")
                 else:
                     lines.append(f"{i:02d} ➤ {total}")
-                total_all_numbers += total
+                total_all_numbers += total  # စုစုပေါင်းငွေတွက်ရန်
 
         if len(lines) == 1:
             await update.message.reply_text(f"ℹ️ {date_key} အတွက် လက်ရှိတွင် လောင်းကြေးမရှိပါ")
@@ -674,16 +674,12 @@ async def ledger_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pnum = pnumber_per_date[date_key]
                 lines.append(f"\n🔴 Power Number: {pnum:02d} ➤ {ledger_data.get(pnum, 0)}")
             
-            if closed_numbers:
-                closed_str = " ".join(f"{n:02d}" for n in sorted(closed_numbers))
-                lines.append(f"\n🔒 Closed Numbers: {closed_str}")
-            
+            # စုစုပေါင်းငွေပြရန် အောက်ခြေတွင် ထည့်ပါ
             lines.append(f"\n💰 စုစုပေါင်း: {total_all_numbers} ကျပ်")
             await update.message.reply_text("\n".join(lines))
     except Exception as e:
         logger.error(f"Error in ledger: {str(e)}")
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-
+        await update.message.reply_text(f"❌ Error: {str(e)}
         
 async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, break_limits, current_working_date
@@ -1192,12 +1188,12 @@ async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, closed_numbers, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, current_working_date
+    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
             return
-        closed_numbers={}    
+         
         user_data = {}
         ledger = {}
         za_data = {}
