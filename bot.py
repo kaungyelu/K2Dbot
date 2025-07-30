@@ -387,7 +387,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     total_amount += amount
 
         if not all_bets:
-            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500")
+            await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500\nအပူး ပါဝါ အပါ")
             return
 
         # Update data stores
