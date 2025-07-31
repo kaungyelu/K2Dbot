@@ -1171,7 +1171,7 @@ async def tsent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in tsent: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
-
+        
 async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id
     try:
@@ -1183,14 +1183,19 @@ async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("ℹ️ လက်ရှိစာရင်းမရှိပါ")
             return
             
-        msg = ["👥 မှတ်ပုံတင်ထားသော user များ:"]
-        msg.extend([f"• {user}" for user in user_data.keys()])
+        msg = ["📊 **စာရင်းသွင်းထားသော User များ**"]
+        msg.append("⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯")
+        
+        for user in user_data.keys():
+            com = com_data.get(user, 0)  
+            za = za_data.get(user, 80)   
+            msg.append(f"👤 **{user}**\n   - Com: {com}%\n   - Za: {za}x")
         
         await update.message.reply_text("\n".join(msg))
     except Exception as e:
         logger.error(f"Error in alldata: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
-
+        
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list
     global overbuy_selections, break_limits, pnumber_per_date, current_working_date, closed_numbers
