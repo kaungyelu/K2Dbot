@@ -1192,7 +1192,9 @@ async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, current_working_date, closed_numbers
+    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list
+    global overbuy_selections, break_limits, pnumber_per_date, current_working_date, closed_numbers
+    
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
@@ -1214,7 +1216,7 @@ global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_lis
     except Exception as e:
         logger.error(f"Error in reset_data: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
-
+        
 async def posthis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
