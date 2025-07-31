@@ -1927,7 +1927,7 @@ if __name__ == "__main__":
     # ================= Add User System =================
     app.add_handler(CallbackQueryHandler(add_user_callback, pattern=r"^add_user$"))
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex(r'^[^$]+\$\d+\$\d+$'),  # Format: Name/Com/Za
+        filters.TEXT & ~filters.COMMAND & filters.Regex(r'^[^$]+$\d+$\d+$'),  # Format: Name/Com/Za
         handle_new_user
     ))
 
