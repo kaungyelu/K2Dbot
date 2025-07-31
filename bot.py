@@ -1183,19 +1183,69 @@ async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("ℹ️ လက်ရှိစာရင်းမရှိပါ")
             return
             
+        
         msg = ["📊 **စာရင်းသွင်းထားသော User များ**"]
         msg.append("⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯")
         
         for user in user_data.keys():
-            com = com_data.get(user, 0)  
-            za = za_data.get(user, 80)   
+            com = com_data.get(user, 0)  # Default 0% if not set
+            za = za_data.get(user, 80)   # Default 80 if not set
             msg.append(f"👤 **{user}**\n   - Com: {com}%\n   - Za: {za}x")
         
-        await update.message.reply_text("\n".join(msg))
+        
+        keyboard = [[InlineKeyboardButton("➕ Add User", callback_data="add_user")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "\n".join(msg),
+            reply_markup=reply_markup
+        )
     except Exception as e:
         logger.error(f"Error in alldata: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
+async def add_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+  
+    await query.edit_message_text("ℹ️ User အသစ်ထည့်ရန်:\nဖော်မတ်: `<အမည်>/<Com>/<Za>`\nဥပမာ: `မမ/15/80`")
+
+
+async def handle_new_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        text = update.message.text
+        if "/" not in text:
+            await update.message.reply_text("❌ ဖော်မတ်မှားနေပါသည်။ ဥပမာ: `မမ/15/80`")
+            return
         
+        username, com_str, za_str = text.split("/")
+        com = int(com_str)
+        za = int(za_str)
+        
+        
+        if username not in user_data:
+            user_data[username] = {}
+        
+        
+        com_data[username] = com
+        za_data[username] = za
+        
+        await update.message.reply_text(
+            f"✅ User အသစ်ထည့်ပြီးပါပြီ!\n"
+            f"👤 {username}\n"
+            f"   - Com: {com}%\n"
+            f"   - Za: {za}x"
+        )
+        
+        
+        await alldata(update, context)
+        
+    except Exception as e:
+        logger.error(f"Error adding user: {str(e)}")
+        await update.message.reply_text("❌ Error! ဖော်မတ်မှားနေပါသည်။ ဥပမာ: `မမ/15/80`")
+
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list
     global overbuy_selections, break_limits, pnumber_per_date, current_working_date, closed_numbers
@@ -1860,6 +1910,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(dateall_toggle, pattern=r"^dateall_toggle:"))
     app.add_handler(CallbackQueryHandler(dateall_view, pattern=r"^dateall_view$"))
     app.add_handler(CallbackQueryHandler(numclose_delete_all, pattern=r"^numclose_delete_all$"))
+    app.add_handler(CallbackQueryHandler(add_user_callback, pattern="^add_user$"))
     
     # Calendar handlers
     app.add_handler(CallbackQueryHandler(show_calendar, pattern=r"^cdate_calendar$"))
@@ -1877,6 +1928,7 @@ if __name__ == "__main__":
     # Message handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^[\u1000-\u109F\s]+$'), handle_menu_selection))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, comza_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_new_user))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("🚀 Bot is starting...")
