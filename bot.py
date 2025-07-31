@@ -1192,7 +1192,7 @@ async def alldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, current_working_date
+global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list, overbuy_selections, break_limits, pnumber_per_date, closed_numbers, current_working_date
     try:
         if update.effective_user.id != admin_id:
             await update.message.reply_text("❌ Admin only command")
@@ -1207,7 +1207,10 @@ async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         overbuy_selections = {}
         break_limits = {}
         pnumber_per_date = {}
-        current_working_date = get_current_date_key()
+
+        closed_numbers = set()
+
+       current_working_date = get_current_date_key()
         
         await update.message.reply_text("✅ ဒေတာများအားလုံးကို ပြန်လည်သုတ်သင်ပြီး လက်ရှိနေ့သို့ပြန်လည်သတ်မှတ်ပြီးပါပြီ")
     except Exception as e:
