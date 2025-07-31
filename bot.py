@@ -1210,14 +1210,14 @@ async def add_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
   
-    await query.edit_message_text("ℹ️ User အသစ်ထည့်ရန်:\nဖော်မတ်: `<အမည်>/<Com>/<Za>`\nဥပမာ: `မမ/15/80`")
+    await query.edit_message_text("ℹ️ User အသစ်ထည့်ရန်:\nဖော်မတ်: `<အမည်>$<Com>$<Za>`\nဥပမာ: `မမ$15$80`")
 
 
 async def handle_new_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = update.message.text
         if "/" not in text:
-            await update.message.reply_text("❌ ဖော်မတ်မှားနေပါသည်။ ဥပမာ: `မမ/15/80`")
+            await update.message.reply_text("❌ ဖော်မတ်မှားနေပါသည်။ ဥပမာ: `မမ$15$80`")
             return
         
         username, com_str, za_str = text.split("/")
@@ -1244,7 +1244,7 @@ async def handle_new_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.error(f"Error adding user: {str(e)}")
-        await update.message.reply_text("❌ Error! ဖော်မတ်မှားနေပါသည်။ ဥပမာ: `မမ/15/80`")
+        await update.message.reply_text("❌ Error! ဖော်မတ်မှားနေပါသည်။ ဥပမာ: `မမ$15$80`")
 
 async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_id, user_data, ledger, za_data, com_data, date_control, overbuy_list
@@ -1927,7 +1927,7 @@ if __name__ == "__main__":
     # ================= Add User System =================
     app.add_handler(CallbackQueryHandler(add_user_callback, pattern=r"^add_user$"))
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex(r'^[^/]+/\d+/\d+$'),  # Format: Name/Com/Za
+        filters.TEXT & ~filters.COMMAND & filters.Regex(r'^[^$]+\$\d+\$\d+$'),  # Format: Name/Com/Za
         handle_new_user
     ))
 
