@@ -274,6 +274,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ကျေးဇူးပြု၍ Telegram username သတ်မှတ်ပါ")
             return
 
+        # Check if admin is posting for another user
+        target_username = None
+        if user.id == admin_id and text.startswith('@'):
+            lines = text.split('\n')
+            if len(lines) > 1:
+                possible_username = lines[0].strip()[1:]  # Remove @
+                if possible_username in user_data:  # Check if valid username
+                    target_username = possible_username
+                    text = '\n'.join(lines[1:])  # Remove first line (@username)
+                else:
+                    await update.message.reply_text(f"❌ User @{possible_username} မရှိပါ")
+                    return
+
+        # Use target_username if exists, otherwise use sender's username
+        username = target_username if target_username else user.username
+
         key = get_current_date_key()
         if not date_control.get(key, False):
             await update.message.reply_text("❌ စာရင်းပိတ်ထားပါသည်")
@@ -334,16 +350,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "အပူး": [0, 11, 22, 33, 44, 55, 66, 77, 88, 99],
                 "ပါဝါ": [5, 16, 27, 38, 49, 50, 61, 72, 83, 94],
                 "နက္ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နက်ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နတ်ခ": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နတ်ခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နက်ခက်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နတ်ခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နက်ခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နခတ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
-                "နခပ်": [7, 18, 24, 35, 42, 53, 69, 70, 81, 96],
                 "ညီကို": [1, 12, 23, 34, 45, 56, 67, 78, 89, 90],
                 "ကိုညီ": [9, 10, 21, 32, 43, 54, 65, 76, 87, 98],
             }
@@ -487,10 +493,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ အချက်အလက်များကိုစစ်ဆေးပါ\nဥပမာ: 12-1000,12/34-1000 \n 12r1000,12r1000-500")
             return
 
-        if user.username not in user_data:
-            user_data[user.username] = {}
-        if key not in user_data[user.username]:
-            user_data[user.username][key] = []
+        if username not in user_data:
+            user_data[username] = {}
+        if key not in user_data[username]:
+            user_data[username][key] = []
 
         if key not in ledger:
             ledger[key] = {}
@@ -504,7 +510,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ledger[key][num] = 0
             ledger[key][num] += amt
             
-            user_data[user.username][key].append((num, amt))
+            user_data[username][key].append((num, amt))
 
         response_parts = []
         if all_bets:
@@ -528,7 +534,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in handle_message: {str(e)}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
-
+        
+        
 async def delete_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
